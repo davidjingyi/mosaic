@@ -1,7 +1,7 @@
 # Mosaic
   Mosaic 项目简介
 
-  Mosaic 是一个模块化的 RAG（检索增强生成）智能问答框架，当前以"肿瘤患者智能答疑系统"为应用场景，但架构上完全领域无关——──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Mosaic 是一个模块化的 RAG（检索增强生成）智能问答框架，当前以"肿瘤患者智能答疑系统"为应用场景，但架构上完全领域无关——
   换文档和词典就能切到法律、金融、教育等任何垂直行业。
 
   核心理念
@@ -26,83 +26,7 @@
   3. 语义缓存：用余弦相似度判断两个问题是否"问的同一件事"，命中缓存直接返回，亚秒级延迟
   4. 领域词典驱动：jieba分词预加载了30+医学术语；同义词词典支持中英文双向扩展
 
-  技术栈
-
-  ┌───────────┬───────────────────────────────────────┐
-  │   层级    │                 技术                  │
-  ├───────────┼───────────────────────────────────────┤
-  │ Web框架   │ FastAPI + Gunicorn + Uvicorn          │
-  ├───────────┼───────────────────────────────────────┤
-  │ 向量库    │ ChromaDB                              │
-  ├───────────┼───────────────────────────────────────┤
-  │ Embedding │ BAAI/bge-m3                           │
-  ├───────────┼───────────────────────────────────────┤
-  │ 精排模型  │ BAAI/bge-reranker-large               │
-  ├───────────┼───────────────────────────────────────┤
-  │ 分词      │ jieba                                 │
-  ├───────────┼───────────────────────────────────────┤
-  │ LLM       │ DeepSeek / 兼容OpenAI接口             │
-  ├───────────┼───────────────────────────────────────┤
-  │ 前端      │ 原生 HTML/CSS/JS（用户端 + 管理后台） │
-  ├───────────┼───────────────────────────────────────┤
-  │ 认证      │ bcrypt + JWT                          │
-  └───────────┴───────────────────────────────────────┘
-
-  项目结构一览
-
-  mosaic/
-  ├── app/
-  │   ├── api/v1/          # 14个REST端点（chat/documents/retrieval/auth/cache/sessions...）
-  │   ├── core/            # 可插拔引擎核心
-  │   ├── core/            # 可插拔引擎核心
-  │   ├── api/v1/          # 14个REST端点（chat/documents/retrieval/auth/cache/sessions...）
-  │   ├── core/            # 可插拔引擎核心
-  │   │   ├── retriever    # BM25 + Vector + RRF 混合检索
-  │   ├── core/            # 可插拔引擎核心
-  │   │   ├── retriever    # BM25 + Vector + RRF 混合检索
-
-  mosaic/
-  ├── app/
-  │   ├── api/v1/          # 14个REST端点（chat/documents/retrieval/auth/cache/sessions...）
-  │   ├── core/            # 可插拔引擎核心
-  │   │   ├── retriever    # BM25 + Vector + RRF 混合检索
-
-  mosaic/
-  ├── app/
-  │   ├── api/v1/          # 14个REST端点（chat/documents/retrieval/auth/cache/sessions...）
-  │   ├── core/            # 可插拔引擎核心
-  │   │   ├── retriever    # BM25 + Vector + RRF 混合检索
-  │   ├── api/v1/          # 14个REST端点（chat/documents/retrieval/auth/cache/sessions...）
-  │   ├── core/            # 可插拔引擎核心
-  │   │   ├── retriever    # BM25 + Vector + RRF 混合检索
-  │   ├── core/            # 可插拔引擎核心
-  │   │   ├── retriever    # BM25 + Vector + RRF 混合检索
-  │   ├── core/            # 可插拔引擎核心
-  │   │   ├── retriever    # BM25 + Vector + RRF 混合检索
-  │   ├── core/            # 可插拔引擎核心
-  │   │   ├── retriever    # BM25 + Vector + RRF 混合检索
-  ├── app/
-  │   ├── api/v1/          # 14个REST端点（chat/documents/retrieval/auth/cache/sessions...）
-  │   ├── core/            # 可插拔引擎核心
-  │   │   ├── retriever    # BM25 + Vector + RRF 混合检索
-  │   ├── api/v1/          # 14个REST端点（chat/documents/retrieval/auth/cache/sessions...）
-  │   ├── core/            # 可插拔引擎核心
-  │   │   ├── retriever    # BM25 + Vector + RRF 混合检索
-  │   │   ├── cancer_booster  # 领域关键词加权重排
-  │   │   ├── embedder     # 本地/远程向量化
-  │   │   ├── chunker      # 智能文档切块（带上下文前缀）
-  │   │   ├── reranker     # Cross-Encoder 精排
-  │   │   ├── query_expander  # 同义词扩展
-  │   │   ├── semantic_cache   # 语义去重缓存（LRU+TTL）
-  │   │   └── generator    # LLM流式生成
-  │   ├── services/        # 业务逻辑层
-  │   ├── models/          # Pydantic Schema
-  │   └── static/          # 前端（用户UI + Admin管理面板）
-  ├── tests/               # 测试套件
-  ├── config.example.yaml  # 配置模板
-  ├── deploy.sh/.bat       # 一键部署脚本
-  └── requirements.txt
-
+ 
   一句话总结
 
   ▎ 一个架构优雅、组件可插拔的 RAG 问答引擎，用"癌种检测增强 + BM25/Dense混合检索 + RRF融合 +
