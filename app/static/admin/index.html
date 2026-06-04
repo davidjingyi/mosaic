@@ -1,0 +1,1480 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Onco-RAG 管理后台</title>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.3/dist/cdn.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="/admin/assets/admin.css">
+<style>
+  [x-cloak] { display: none !important; }
+  .folder-tree li { position: relative; }
+  .folder-tree .folder-name { cursor: pointer; padding: 4px 8px; border-radius: 4px; }
+  .folder-tree .folder-name:hover { background: #f3f4f6; }
+  .folder-tree .folder-name.active { background: #d1fae5; color: #065f46; font-weight: 600; }
+  .status-pending { color: #9ca3af; }
+  .status-scanned { color: #3b82f6; }
+  .status-chunked { color: #eab308; }
+  .status-embedding { color: #f97316; }
+  .status-indexed { color: #10b981; }
+  .status-failed { color: #ef4444; }
+  .modal-overlay { background: rgba(0,0,0,0.5); }
+</style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+<div x-data="adminApp()" x-init="init()" class="flex h-screen">
+
+  <!-- Login Overlay -->
+  <div x-show="showLogin" class="fixed inset-0 bg-slate-900 z-50 flex items-center justify-center" x-cloak>
+    <div class="bg-white rounded-xl p-8 w-96 shadow-lg">
+      <h2 class="text-2xl font-bold text-center mb-2">Onco-RAG 管理后台</h2>
+      <p class="text-sm text-gray-400 text-center mb-6">v2.1</p>
+      <div class="space-y-4">
+        <div>
+          <label class="block text-sm text-gray-500 mb-1">用户名</label>
+          <input type="text" x-model="loginForm.username" class="w-full border rounded-lg px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label class="block text-sm text-gray-500 mb-1">密码</label>
+          <input type="password" name="admin-password" autocomplete="current-password" @keydown.enter="login()" x-model="loginForm.password" class="w-full border rounded-lg px-3 py-2 text-sm" placeholder="请输入管理密码">
+        </div>
+        <button @click="login()" class="w-full py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium">登录</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sidebar -->
+  <aside class="w-60 bg-slate-900 text-white flex flex-col" x-show="!showLogin">
+    <div class="p-5 border-b border-slate-700">
+      <h1 class="text-lg font-bold">⚙️ 管理后台</h1>
+      <p class="text-xs text-slate-400 mt-1">Onco-RAG v2.1</p>
+    </div>
+    <nav class="flex-1 p-3 space-y-1">
+      <template x-for="item in menu" :key="item.id">
+        <button @click="page = item.id; if (item.id === 'dashboard') loadDashboard(); if (item.id === 'kb') loadIngestJobs(); if (item.id === 'pdf_map') loadPdfMap()"
+          :class="page === item.id ? 'bg-emerald-600 text-white' : 'text-slate-300 hover:bg-slate-800'"
+          class="w-full text-left px-4 py-2.5 rounded-lg text-sm font-medium transition flex items-center gap-2">
+          <span x-text="item.icon"></span>
+          <span x-text="item.label"></span>
+        </button>
+      </template>
+    </nav>
+    <div class="p-4 border-t border-slate-700 text-xs text-slate-400">
+      <div class="flex items-center justify-between mb-2 px-1">
+        <span class="text-slate-500">🌐</span>
+        <select x-model="lang" @change="localStorage.setItem('onco_lang', lang)" class="bg-slate-800 text-slate-300 text-xs border border-slate-600 rounded px-1 py-0.5">
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <button @click="showChangePassword = true" class="text-left hover:text-white">🔐 <span x-text="t('changePwd')"></span></button>
+      <button @click="logout()" class="text-left hover:text-white">🚪 <span x-text="t('logout')"></span></button>
+      <a href="/" target="_blank" class="hover:text-white">→ <span x-text="t('backToPatient')"></span></a>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="flex-1 overflow-y-auto p-8">
+
+    <!-- Toast -->
+    <div x-show="toast.show" x-transition class="fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm font-medium"
+      :class="toast.type === 'success' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'"
+      x-text="toast.message"></div>
+
+    <!-- 1. 系统概览 -->
+    <!-- 1. 运行看板 -->
+    <div x-show="page === 'dashboard'" x-cloak>
+      <h2 class="text-2xl font-bold mb-6">后台运行看板</h2>
+
+      <!-- 统计卡片 -->
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <div class="text-sm text-gray-500">总任务</div>
+          <div class="text-xl font-bold text-gray-700 mt-1" x-text="dashboardStats.total"></div>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <div class="text-sm text-gray-500">运行中</div>
+          <div class="text-xl font-bold text-blue-600 mt-1" x-text="dashboardStats.running"></div>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <div class="text-sm text-gray-500">已完成</div>
+          <div class="text-xl font-bold text-emerald-600 mt-1" x-text="dashboardStats.completed"></div>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <div class="text-sm text-gray-500">失败</div>
+          <div class="text-xl font-bold text-red-600 mt-1" x-text="dashboardStats.failed"></div>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <div class="text-sm text-gray-500">已取消</div>
+          <div class="text-xl font-bold text-orange-500 mt-1" x-text="dashboardStats.cancelled"></div>
+        </div>
+      </div>
+
+      <!-- 向量库 & 系统信息 -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <div class="text-sm text-gray-500">向量库文档数</div>
+          <div class="text-xl font-bold text-indigo-600 mt-1" x-text="stats.documents?.indexed ?? 0"></div>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <div class="text-sm text-gray-500">向量片段总数</div>
+          <div class="text-xl font-bold text-indigo-600 mt-1" x-text="stats.documents?.total_chunks ?? 0"></div>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <div class="text-sm text-gray-500">向量库大小</div>
+          <div class="text-xl font-bold text-indigo-600 mt-1" x-text="(stats.vector_store?.db_size_mb ?? 0) + ' MB'"></div>
+        </div>
+      </div>
+
+      <!-- 正在运行 -->
+      <div x-show="dashboardRunningJobs.length" class="mb-8">
+        <h3 class="font-bold text-lg mb-3 flex items-center gap-2">
+          <span class="relative flex h-3 w-3">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+            <span class="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+          </span>
+          正在运行 (<span x-text="dashboardRunningJobs.length"></span>)
+        </h3>
+        <div class="space-y-3">
+          <template x-for="job in dashboardRunningJobs" :key="job.job_id">
+            <div class="bg-white rounded-xl p-4 shadow-sm border">
+              <div class="flex justify-between items-center mb-2">
+                <div class="flex items-center gap-2">
+                  <span class="px-2 py-0.5 rounded text-xs font-medium"
+                    :class="job.type === 'embed' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'"
+                    x-text="job.type === 'embed' ? '嵌入' : '分块'"></span>
+                  <span class="font-mono text-xs text-gray-400" x-text="job.job_id"></span>
+                </div>
+                <div class="flex items-center gap-3">
+                  <span class="text-sm text-gray-500" x-text="(job.current_doc ?? 0) + '/' + (job.total_docs ?? 0)"></span>
+                  <button @click="cancelDashboardJob(job.job_id)" class="text-xs text-red-500 hover:text-red-700 border border-red-200 rounded px-2 py-1">终止</button>
+                </div>
+              </div>
+              <div class="mb-2">
+                <div class="flex justify-between text-xs mb-1">
+                  <span class="text-gray-600" x-text="(job.current_stage || '准备中')"></span>
+                  <span class="font-medium" x-text="(job.progress_pct ?? 0) + '%'"></span>
+                </div>
+                <div class="w-full bg-gray-100 rounded-full h-2">
+                  <div class="bg-blue-500 h-2 rounded-full transition-all duration-500" :style="'width:' + (job.progress_pct ?? 0) + '%'"></div>
+                </div>
+              </div>
+              <div class="text-xs text-gray-400 truncate" x-text="job.current_file || ''"></div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <!-- 任务历史 -->
+      <div>
+        <h3 class="font-bold text-lg mb-3">最近任务</h3>
+        <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-500 text-xs uppercase">
+              <tr>
+                <th class="px-4 py-3 text-left">任务ID</th>
+                <th class="px-4 py-3 text-left">类型</th>
+                <th class="px-4 py-3 text-left">状态</th>
+                <th class="px-4 py-3 text-left">进度</th>
+                <th class="px-4 py-3 text-left">当前文件</th>
+                <th class="px-4 py-3 text-left">错误</th>
+                <th class="px-4 py-3 text-left">时间</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="job in dashboardJobs" :key="job.job_id">
+                <tr class="border-b hover:bg-gray-50">
+                  <td class="px-4 py-3 font-mono text-xs text-gray-400" x-text="job.job_id"></td>
+                  <td class="px-4 py-3">
+                    <span class="px-2 py-0.5 rounded text-xs font-medium"
+                      :class="job.type === 'embed' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'"
+                      x-text="job.type === 'embed' ? '嵌入' : '分块'"></span>
+                  </td>
+                  <td class="px-4 py-3">
+                    <span class="px-2 py-0.5 rounded text-xs font-medium"
+                      :class="{
+                        'bg-blue-100 text-blue-700': job.status === 'running' || job.status === 'pending',
+                        'bg-emerald-100 text-emerald-700': job.status === 'completed',
+                        'bg-red-100 text-red-700': job.status === 'failed',
+                        'bg-orange-100 text-orange-700': job.status === 'cancelled'
+                      }"
+                      x-text="{pending:'等待中',running:'运行中',completed:'已完成',failed:'失败',cancelled:'已取消'}[job.status] || job.status"></span>
+                  </td>
+                  <td class="px-4 py-3" x-text="(job.current_doc ?? 0) + '/' + (job.total_docs ?? 0) + ' (' + (job.progress_pct ?? 0) + '%)'"></td>
+                  <td class="px-4 py-3 text-gray-500 truncate max-w-xs" :title="job.current_file" x-text="job.current_file || '-'"></td>
+                  <td class="px-4 py-3">
+                    <span x-show="job.errors?.length" class="text-red-500 text-xs" x-text="job.errors.length + ' 个'"></span>
+                    <span x-show="!job.errors?.length" class="text-gray-400 text-xs">-</span>
+                  </td>
+                  <td class="px-4 py-3 text-gray-400 text-xs whitespace-nowrap" x-text="formatJobTime(job.updated_at)"></td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <p x-show="!dashboardJobs.length" class="text-center text-gray-400 py-8">暂无任务</p>
+        </div>
+      </div>
+    </div>
+
+    <div x-show="page === 'overview'" x-cloak>
+      <h2 class="text-2xl font-bold mb-6">系统概览</h2>
+      <div x-show="stats.warnings?.length" class="bg-red-50 border border-red-200 rounded-xl p-4 mb-6">
+        <div class="flex items-center gap-2 text-red-700 font-medium text-sm mb-2">
+          <span>⚠️</span>
+          <span>系统警告 (<span x-text="stats.warnings?.length"></span>)</span>
+        </div>
+        <ul class="list-disc list-inside text-xs text-red-600 space-y-1">
+          <template x-for="w in stats.warnings" :key="w">
+            <li x-text="w"></li>
+          </template>
+        </ul>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+        <div class="bg-white rounded-xl p-5 shadow-sm border">
+          <div class="text-sm text-gray-500">已索引文档</div>
+          <div class="text-2xl font-bold text-emerald-600 mt-1" x-text="stats.documents?.indexed ?? 0"></div>
+        </div>
+        <div class="bg-white rounded-xl p-5 shadow-sm border">
+          <div class="text-sm text-gray-500">向量片段数</div>
+          <div class="text-2xl font-bold text-blue-600 mt-1" x-text="stats.documents?.total_chunks ?? 0"></div>
+        </div>
+        <div class="bg-white rounded-xl p-5 shadow-sm border">
+          <div class="text-sm text-gray-500">总会话数</div>
+          <div class="text-2xl font-bold text-orange-600 mt-1" x-text="stats.sessions?.total ?? 0"></div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div class="bg-white rounded-xl p-6 shadow-sm border">
+          <h3 class="font-bold mb-4">当前配置摘要</h3>
+          <div class="space-y-2 text-sm">
+            <div class="flex justify-between border-b pb-2"><span>LLM 模型</span><span class="font-mono text-gray-600" x-text="stats.config_summary?.llm_model"></span></div>
+            <div class="flex justify-between border-b pb-2"><span>Embedding 模型</span><span class="font-mono text-gray-600" x-text="stats.config_summary?.embedding_model"></span></div>
+            <div class="flex justify-between border-b pb-2"><span>混合检索</span><span class="font-mono text-gray-600" x-text="stats.config_summary?.hybrid_enabled ? '开启' : '关闭'"></span></div>
+            <div class="flex justify-between"><span>重排序</span><span class="font-mono text-gray-600" x-text="stats.config_summary?.use_rerank ? '开启' : '关闭'"></span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. 知识库管理 v2.2 -->
+    <div x-show="page === 'kb'" x-cloak>
+      <h2 class="text-2xl font-bold mb-6">知识库管理</h2>
+
+      <!-- 运行中任务面板 -->
+      <div x-show="ingestJobs && ingestJobs.some(j => j.status === 'running')" class="bg-blue-50 border border-blue-200 rounded-xl p-5 mb-6">
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-sm font-bold text-blue-700">⚡ 运行中任务</span>
+          <span class="text-xs text-blue-500 animate-pulse">● 进行中</span>
+        </div>
+        <template x-for="job in ingestJobs.filter(j => j.status === 'running')" :key="job.job_id">
+          <div class="bg-white rounded-lg p-4 border border-blue-100 mb-2 last:mb-0">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-sm font-medium text-gray-700" x-text="job.job_type === 'chunk' ? '📄 分块任务' : '🧠 嵌入任务'"></span>
+              <span class="text-xs px-2 py-0.5 rounded-full" 
+                :class="job.current_stage === 'embedding' ? 'bg-orange-100 text-orange-700' : job.current_stage === 'chunking' ? 'bg-yellow-100 text-yellow-700' : 'bg-blue-100 text-blue-700'"
+                x-text="job.current_stage === 'scanning' ? '🔍 解析中' : job.current_stage === 'chunking' ? '📄 分块中' : job.current_stage === 'embedding' ? '🧠 嵌入中' : job.current_stage || '⏳ 准备中'"></span>
+            </div>
+            <div class="bg-gray-200 rounded-full h-2 mb-2">
+              <div class="bg-blue-500 h-2 rounded-full transition-all" :style="'width:' + (job.progress_pct || 0) + '%'"></div>
+            </div>
+            <div class="flex justify-between text-xs text-gray-500">
+              <span x-text="job.current_doc + ' / ' + job.total_docs + ' 文档'"></span>
+              <span class="truncate max-w-[300px]" x-text="job.current_file || '准备中...'"></span>
+              <span x-text="(job.progress_pct || 0) + '%'"></span>
+            </div>
+            <div x-show="job.errors && job.errors.length" class="mt-2 text-xs text-red-500">
+              <span x-text="job.errors.length + ' 个错误'"></span>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- File Upload -->
+      <div class="bg-white rounded-xl p-5 shadow-sm border mb-6">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-sm font-bold">📤 文件上传</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <input type="file" id="file-input" @change="handleFileSelect($event)" multiple accept=".pdf,.txt,.md,.docx" class="text-sm">
+          <button @click="uploadFiles()" :disabled="!uploadFileList.length || uploading" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white rounded-lg text-sm font-medium">
+            <span x-show="!uploading">上传</span>
+            <span x-show="uploading">上传中...</span>
+          </button>
+          <span x-show="uploadFileList.length" class="text-xs text-gray-500" x-text="uploadFileList.length + ' 个文件待上传'"></span>
+        </div>
+      </div>
+
+      <!-- KB Paths + One-click Scan -->
+      <div class="bg-white rounded-xl p-5 shadow-sm border mb-6">
+        <div class="flex items-center justify-between mb-4">
+          <span class="text-sm font-bold">📁 知识库路径</span>
+          <div class="flex gap-2">
+            <button @click="scanKb()" :disabled="scanning" class="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 disabled:opacity-50 text-white rounded text-xs font-medium">
+              <span x-show="!scanning">🔍 一键扫描</span>
+              <span x-show="scanning">扫描中...</span>
+            </button>
+            <button @click="previewScan()" :disabled="scanning" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded text-xs font-medium">
+              <span x-show="!scanning">预扫描</span>
+              <span x-show="scanning">扫描中...</span>
+            </button>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-gray-500 w-20">PDF 路径</span>
+            <input type="text" x-model="kbPaths.pdf_paths[0]" placeholder="./knowledge-base/pdfs" class="flex-1 border rounded px-2 py-1 text-xs">
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-gray-500 w-20">MD 路径</span>
+            <input type="text" x-model="kbPaths.markdown_paths[0]" placeholder="./knowledge-base/docs" class="flex-1 border rounded px-2 py-1 text-xs">
+          </div>
+          <div class="flex justify-end">
+            <button @click="saveKbPaths()" class="px-3 py-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-xs">保存路径</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Scan Results + Batch Actions -->
+      <div class="bg-white rounded-xl p-5 shadow-sm border mb-6">
+        <div class="flex items-center justify-between mb-4">
+          <span class="text-sm font-bold">📋 扫描结果</span>
+          <div class="flex gap-2 text-xs" x-show="scanResults.total > 0">
+            <span class="text-emerald-600 font-medium">新增 <span x-text="scanResults.new?.length ?? 0"></span></span>
+            <span class="text-blue-600 font-medium">修改 <span x-text="scanResults.modified?.length ?? 0"></span></span>
+            <span class="text-gray-400">未变 <span x-text="scanResults.unchanged?.length ?? 0"></span></span>
+            <span class="text-red-400">缺失 <span x-text="scanResults.missing?.length ?? 0"></span></span>
+          </div>
+        </div>
+
+        <!-- Progress Panel -->
+        <div x-show="ingestProgress.show" class="mb-4 bg-gray-50 rounded-lg p-4 border">
+          <div class="flex items-center justify-between mb-2">
+            <div class="text-sm font-medium text-gray-700">
+              <span x-text="ingestProgress.job_type === 'chunk' ? '📄 分块任务' : '🧠 嵌入任务'"></span>
+              <span class="mx-1">·</span>
+              <span x-text="ingestProgress.stage === 'pending' ? '⏳ 等待中' : ingestProgress.stage === 'scanning' ? '🔍 解析中' : ingestProgress.stage === 'chunking' ? '📄 分块中' : ingestProgress.stage === 'embedding' ? '🧠 嵌入中' : ingestProgress.stage === 'indexing' ? '📦 索引中' : ingestProgress.stage === 'completed' ? '✅ 已完成' : '❌ 已结束'"></span>
+              <span class="text-xs text-gray-400 ml-2" x-text="`${ingestProgress.current} / ${ingestProgress.total}`"></span>
+            </div>
+            <button x-show="activeIngestJob" @click="cancelIngest()" class="text-xs px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100">终止</button>
+          </div>
+          <div class="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+            <div class="bg-emerald-500 h-2.5 rounded-full transition-all duration-300" :style="`width: ${ingestProgress.pct}%`"></div>
+          </div>
+          <!-- Chunk-level progress (only during embedding stage) -->
+          <div x-show="ingestProgress.stage === 'embedding' && ingestProgress.chunk_total > 0" class="mb-2">
+            <div class="flex items-center justify-between text-xs text-gray-500 mb-1">
+              <span x-text="`Chunk ${ingestProgress.chunk_current} / ${ingestProgress.chunk_total}`"></span>
+              <span x-text="`${ingestProgress.chunk_total > 0 ? Math.round((ingestProgress.chunk_current / ingestProgress.chunk_total) * 100) : 0}%`"></span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-1.5">
+              <div class="bg-orange-400 h-1.5 rounded-full transition-all duration-300" :style="`width: ${ingestProgress.chunk_total > 0 ? (ingestProgress.chunk_current / ingestProgress.chunk_total) * 100 : 0}%`"></div>
+            </div>
+          </div>
+          <div class="text-xs text-gray-500 truncate" x-text="ingestProgress.file || '准备中...'"></div>
+          <div x-show="ingestProgress.errors.length" class="mt-2">
+            <template x-for="err in ingestProgress.errors" :key="err">
+              <div class="text-xs text-red-500" x-text="err"></div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Scan Results Table -->
+        <div x-show="scanResults.total > 0" class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-600">
+              <tr>
+                <th class="px-3 py-2 w-8"><input type="checkbox" @change="toggleSelectScanAll($event)"></th>
+                <th class="text-left px-3 py-2">文件名</th>
+                <th class="text-left px-3 py-2">状态</th>
+                <th class="text-left px-3 py-2">预估大小</th>
+                <th class="text-right px-3 py-2">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="f in scanResults.new" :key="f.file_path">
+                <tr class="border-b hover:bg-gray-50">
+                  <td class="px-3 py-2"><input type="checkbox" x-model="selectedScanFiles" :value="f.file_path" class="rounded"></td>
+                  <td class="px-3 py-2 text-xs" x-text="f.file_path.split('\\').pop()"></td>
+                  <td class="px-3 py-2"><span class="text-xs px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded">新增</span></td>
+                  <td class="px-3 py-2 text-xs text-gray-500" x-text="((f.file_size||0)/1024).toFixed(1)+' KB'"></td>
+                  <td class="px-3 py-2 text-right">
+                    <button @click="chunkSingle(f.file_path)" class="text-xs px-2 py-1 bg-yellow-50 text-yellow-700 rounded hover:bg-yellow-100 mr-1">分块</button>
+                  </td>
+                </tr>
+              </template>
+              <template x-for="f in scanResults.modified" :key="f.file_path">
+                <tr class="border-b hover:bg-gray-50">
+                  <td class="px-3 py-2"><input type="checkbox" x-model="selectedScanFiles" :value="f.file_path" class="rounded"></td>
+                  <td class="px-3 py-2 text-xs" x-text="f.file_path.split('\\').pop()"></td>
+                  <td class="px-3 py-2"><span class="text-xs px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">修改</span></td>
+                  <td class="px-3 py-2 text-xs text-gray-500" x-text="((f.file_size||0)/1024).toFixed(1)+' KB'"></td>
+                  <td class="px-3 py-2 text-right">
+                    <button @click="chunkSingle(f.file_path)" class="text-xs px-2 py-1 bg-yellow-50 text-yellow-700 rounded hover:bg-yellow-100 mr-1">分块</button>
+                  </td>
+                </tr>
+              </template>
+              <template x-for="f in scanResults.unchanged" :key="f.file_path">
+                <tr class="border-b hover:bg-gray-50">
+                  <td class="px-3 py-2"><input type="checkbox" x-model="selectedScanFiles" :value="f.file_path" class="rounded"></td>
+                  <td class="px-3 py-2 text-xs" x-text="f.file_path.split('\\').pop()"></td>
+                  <td class="px-3 py-2"><span class="text-xs px-1.5 py-0.5 bg-gray-50 text-gray-400 rounded">未变</span></td>
+                  <td class="px-3 py-2 text-xs text-gray-500" x-text="((f.file_size||0)/1024).toFixed(1)+' KB'"></td>
+                  <td class="px-3 py-2 text-right">
+                    <button @click="embedSingle(f.existing_doc_id)" x-show="f.existing_doc_id" class="text-xs px-2 py-1 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100">嵌入</button>
+                  </td>
+                </tr>
+              </template>
+              <template x-for="f in scanResults.missing" :key="f.file_path">
+                <tr class="border-b hover:bg-gray-50 bg-red-50/30">
+                  <td class="px-3 py-2"><input type="checkbox" x-model="selectedScanFiles" :value="f.file_path" class="rounded"></td>
+                  <td class="px-3 py-2 text-xs" x-text="f.file_path.split('\\').pop()"></td>
+                  <td class="px-3 py-2"><span class="text-xs px-1.5 py-0.5 bg-red-50 text-red-500 rounded">缺失</span></td>
+                  <td class="px-3 py-2 text-xs text-gray-500" x-text="((f.file_size||0)/1024).toFixed(1)+' KB'"></td>
+                  <td class="px-3 py-2 text-right">
+                    <button @click="deleteKbDoc(f.existing_doc_id)" x-show="f.existing_doc_id" class="text-xs px-2 py-1 bg-red-50 text-red-600 rounded hover:bg-red-100">清理</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+
+          <!-- Batch Actions -->
+          <div x-show="selectedScanFiles.length" class="mt-3 flex gap-2">
+            <button @click="batchChunk()" class="px-3 py-1.5 bg-yellow-500 hover:bg-yellow-600 text-white rounded text-xs font-medium">
+              📄 批量分块 (<span x-text="selectedScanFiles.length"></span>)
+            </button>
+            <button @click="batchEmbedFromScan()" class="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white rounded text-xs font-medium">
+              🧠 批量嵌入 (<span x-text="selectedScanFiles.length"></span>)
+            </button>
+            <button @click="selectedScanFiles = []" class="px-3 py-1.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded text-xs">清空选择</button>
+          </div>
+        </div>
+
+        <p x-show="scanResults.total === 0" class="text-center text-gray-400 text-sm py-4">暂无扫描结果，点击「预扫描」或「一键扫描」开始</p>
+      </div>
+
+      <!-- Folder Tree + File List -->
+      <div class="flex gap-6" style="min-height: 500px;">
+        <!-- Folder Tree -->
+        <div class="w-64 bg-white rounded-xl shadow-sm border p-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="font-bold text-sm">文件夹</h3>
+            <button @click="showNewFolder = true" class="text-xs text-emerald-600 hover:text-emerald-700 font-medium">+ 新建</button>
+          </div>
+          <ul class="folder-tree space-y-1 text-sm">
+            <template x-for="folder in folders" :key="folder.id">
+              <li>
+                <div @click="selectFolder(folder.id)"
+                  :class="selectedFolder === folder.id ? 'active' : ''"
+                  class="folder-name flex items-center gap-1">
+                  <span x-text="folder.children?.length ? '📁' : '📂'"></span>
+                  <span x-text="folder.name"></span>
+                </div>
+                <ul x-show="folder.children?.length" class="ml-4 mt-1 space-y-1">
+                  <template x-for="child in folder.children" :key="child.id">
+                    <li>
+                      <div @click="selectFolder(child.id)"
+                        :class="selectedFolder === child.id ? 'active' : ''"
+                        class="folder-name flex items-center gap-1">
+                        <span x-text="child.children?.length ? '📁' : '📂'"></span>
+                        <span x-text="child.name"></span>
+                      </div>
+                    </li>
+                  </template>
+                </ul>
+              </li>
+            </template>
+          </ul>
+        </div>
+
+        <!-- File List with Tabs -->
+        <div class="flex-1 bg-white rounded-xl shadow-sm border p-4">
+          <!-- Tabs -->
+          <div class="flex items-center justify-between mb-3">
+            <div class="flex gap-1 bg-gray-100 rounded-lg p-1">
+              <button @click="kbTab = 'all'; selectedDocIds = []" :class="kbTab === 'all' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'" class="px-3 py-1.5 rounded-md text-xs font-medium transition">全部 <span x-show="kbFileCounts.all > 0" class="ml-0.5 text-[10px] bg-gray-200 text-gray-600 px-1 rounded" x-text="kbFileCounts.all"></span></button>
+              <button @click="kbTab = 'pending'; selectedDocIds = []" :class="kbTab === 'pending' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'" class="px-3 py-1.5 rounded-md text-xs font-medium transition">待处理 <span x-show="kbFileCounts.pending > 0" class="ml-0.5 text-[10px] bg-gray-200 text-gray-600 px-1 rounded" x-text="kbFileCounts.pending"></span></button>
+              <button @click="kbTab = 'chunked'; selectedDocIds = []" :class="kbTab === 'chunked' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'" class="px-3 py-1.5 rounded-md text-xs font-medium transition">待嵌入 <span x-show="kbFileCounts.chunked > 0" class="ml-0.5 text-[10px] bg-yellow-200 text-yellow-700 px-1 rounded" x-text="kbFileCounts.chunked"></span></button>
+              <button @click="kbTab = 'indexed'; selectedDocIds = []" :class="kbTab === 'indexed' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'" class="px-3 py-1.5 rounded-md text-xs font-medium transition">已完成 <span x-show="kbFileCounts.indexed > 0" class="ml-0.5 text-[10px] bg-emerald-200 text-emerald-700 px-1 rounded" x-text="kbFileCounts.indexed"></span></button>
+              <button @click="kbTab = 'backup'; selectedDocIds = []" :class="kbTab === 'backup' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'" class="px-3 py-1.5 rounded-md text-xs font-medium transition">💾 备份 <span x-show="kbFileCounts.backup > 0" class="ml-0.5 text-[10px] bg-purple-200 text-purple-700 px-1 rounded" x-text="kbFileCounts.backup"></span></button>
+            </div>
+            <div class="flex gap-2">
+              <template x-if="kbTab === 'all'">
+                <div class="flex gap-2">
+                  <button @click="batchChunkDocs()" :disabled="!selectedDocIds.length" class="text-xs px-3 py-1.5 bg-yellow-50 text-yellow-700 rounded hover:bg-yellow-100 disabled:opacity-50">📄 批量分块</button>
+                  <button @click="batchEmbedDocs()" :disabled="!selectedDocIds.length" class="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100 disabled:opacity-50">🧠 批量嵌入</button>
+                </div>
+              </template>
+              <template x-if="kbTab === 'pending'">
+                <button @click="batchChunkDocs()" :disabled="!selectedDocIds.length" class="text-xs px-3 py-1.5 bg-yellow-50 text-yellow-700 rounded hover:bg-yellow-100 disabled:opacity-50">📄 批量分块</button>
+              </template>
+              <template x-if="kbTab === 'chunked'">
+                <div class="flex gap-2">
+                  <button @click="batchChunkDocs()" :disabled="!selectedDocIds.length" class="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 disabled:opacity-50">📄 批量重新分块</button>
+                  <button @click="batchEmbedDocs()" :disabled="!selectedDocIds.length" class="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100 disabled:opacity-50">🧠 批量嵌入</button>
+                </div>
+              </template>
+              <template x-if="kbTab === 'indexed'">
+                <div class="flex gap-2">
+                  <button @click="batchChunkDocs()" :disabled="!selectedDocIds.length" class="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 disabled:opacity-50">📄 批量重新分块</button>
+                  <button @click="batchEmbedDocs()" :disabled="!selectedDocIds.length" class="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100 disabled:opacity-50">🧠 批量重新嵌入</button>
+                </div>
+              </template>
+              <template x-if="kbTab === 'backup'">
+                <div class="flex gap-2">
+                  <button @click="batchChunkDocs()" :disabled="!selectedDocIds.length" class="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 disabled:opacity-50">📄 批量重新分块</button>
+                  <button @click="batchEmbedDocs()" :disabled="!selectedDocIds.length" class="text-xs px-3 py-1.5 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100 disabled:opacity-50">🧠 批量重新嵌入</button>
+                </div>
+              </template>
+              <button @click="batchDelete()" :disabled="!selectedDocIds.length" class="text-xs px-3 py-1.5 bg-red-50 text-red-600 rounded hover:bg-red-100 disabled:opacity-50">删除</button>
+            </div>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead class="bg-gray-50 text-gray-600">
+                <tr>
+                  <th class="px-3 py-2 w-8"><input type="checkbox" @change="toggleSelectAll($event)"></th>
+                  <th class="text-left px-3 py-2">文件名</th>
+                  <th class="text-left px-3 py-2">状态</th>
+                  <th class="text-left px-3 py-2">Chunks</th>
+                  <th class="text-left px-3 py-2">大小</th>
+                  <th class="text-right px-3 py-2">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="doc in filteredKbFiles" :key="doc.doc_id">
+                  <tr class="border-b hover:bg-gray-50">
+                    <td class="px-3 py-2"><input type="checkbox" x-model="selectedDocIds" :value="doc.doc_id" class="rounded"></td>
+                    <td class="px-3 py-2" x-text="doc.file_path?.split('\\').pop() || doc.doc_id"></td>
+                    <td class="px-3 py-2">
+                      <span :class="'status-' + doc.status" class="text-xs font-medium" x-text="doc.status?.toUpperCase()"></span>
+                      <span x-show="doc.status === 'embedding'" class="ml-1 inline-flex items-center gap-1">
+                        <span class="w-1.5 h-1.5 bg-orange-400 rounded-full animate-pulse"></span>
+                        <span class="text-[10px] text-orange-500">进行中</span>
+                      </span>
+                    </td>
+                    <td class="px-3 py-2" x-text="doc.chunk_count ?? 0"></td>
+                    <td class="px-3 py-2" x-text="((doc.file_size||0) / 1024).toFixed(1) + ' KB'"></td>
+                    <td class="px-3 py-2 text-right">
+                      <!-- "全部" tab: show per-doc buttons based on status -->
+                      <template x-if="kbTab === 'all'">
+                        <span>
+                          <button x-show="['pending','scanned','failed','uploaded'].includes(doc.status)" @click="chunkDoc(doc.doc_id)" class="text-xs px-2 py-1 bg-yellow-50 text-yellow-700 rounded hover:bg-yellow-100 mr-1">分块</button>
+                          <template x-if="doc.status === 'chunked'">
+                            <span>
+                              <button @click="chunkDoc(doc.doc_id)" class="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 mr-1">重新分块</button>
+                              <button @click="embedDoc(doc.doc_id)" class="text-xs px-2 py-1 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100 mr-1">嵌入</button>
+                            </span>
+                          </template>
+                          <template x-if="['indexed','embedding','imported'].includes(doc.status)">
+                            <span>
+                              <template x-if="doc.status !== 'embedding'">
+                                <span>
+                                  <button @click="rechunkDoc(doc.doc_id)" class="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 mr-1">重新分块</button>
+                                  <button @click="embedDoc(doc.doc_id)" class="text-xs px-2 py-1 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100 mr-1">重新嵌入</button>
+                                </span>
+                              </template>
+                              <template x-if="doc.status === 'embedding'">
+                                <span class="text-xs text-orange-500">嵌入中…</span>
+                              </template>
+                            </span>
+                          </template>
+                        </span>
+                      </template>
+                      <!-- pending/failed/scanned: 分块 -->
+                      <button x-show="kbTab === 'pending'" @click="chunkDoc(doc.doc_id)" class="text-xs px-2 py-1 bg-yellow-50 text-yellow-700 rounded hover:bg-yellow-100 mr-1">分块</button>
+                      <!-- chunked: 重新分块(仅分块) + 嵌入 -->
+                      <template x-if="kbTab === 'chunked'">
+                        <span>
+                          <button @click="chunkDoc(doc.doc_id)" class="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 mr-1">重新分块</button>
+                          <button @click="embedDoc(doc.doc_id)" class="text-xs px-2 py-1 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100 mr-1">嵌入</button>
+                        </span>
+                      </template>
+                      <!-- indexed/backup: 重新分块 + 重新嵌入 (embedding 状态只显示进行中) -->
+                      <template x-if="kbTab === 'indexed' || kbTab === 'backup'">
+                        <span>
+                          <template x-if="doc.status !== 'embedding'">
+                            <span>
+                              <button @click="rechunkDoc(doc.doc_id)" class="text-xs px-2 py-1 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 mr-1">重新分块</button>
+                              <button @click="embedDoc(doc.doc_id)" class="text-xs px-2 py-1 bg-emerald-50 text-emerald-700 rounded hover:bg-emerald-100 mr-1">重新嵌入</button>
+                            </span>
+                          </template>
+                          <template x-if="doc.status === 'embedding'">
+                            <span class="text-xs text-orange-500">嵌入中…</span>
+                          </template>
+                        </span>
+                      </template>
+                      <!-- all except embedding: 删除 -->
+                      <button x-show="doc.status !== 'embedding'" @click="deleteKbDoc(doc.doc_id)" class="text-red-500 hover:text-red-700 text-xs">删除</button>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <p x-show="!filteredKbFiles.length" class="text-center text-gray-400 py-8">该分类暂无文档</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- New Folder Modal -->
+      <div x-show="showNewFolder" class="fixed inset-0 modal-overlay flex items-center justify-center z-50" x-cloak>
+        <div class="bg-white rounded-xl p-6 w-80 shadow-lg">
+          <h3 class="font-bold mb-4">新建文件夹</h3>
+          <input type="text" x-model="newFolderName" placeholder="文件夹名称" class="w-full border rounded-lg px-3 py-2 text-sm mb-4">
+          <div class="flex justify-end gap-2">
+            <button @click="showNewFolder = false" class="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700">取消</button>
+            <button @click="createFolder()" class="px-3 py-1.5 text-sm bg-emerald-500 text-white rounded-lg">创建</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- 3. Chunk 管理 -->
+    <div x-show="page === 'chunks'" x-cloak>
+      <h2 class="text-2xl font-bold mb-6">Chunk 管理</h2>
+      <div class="bg-white rounded-xl p-6 shadow-sm border mb-6">
+        <div class="flex items-center gap-4 mb-4">
+          <label class="text-sm text-gray-500">选择文档</label>
+          <select x-model="chunkDocId" @change="loadChunks()" class="border rounded-lg px-3 py-2 text-sm">
+            <option value="">请选择...</option>
+            <template x-for="doc in allDocsForChunk" :key="doc.doc_id">
+              <option :value="doc.doc_id" x-text="(doc.file_path?.split('\\').pop() || doc.doc_id) + ' (' + doc.chunk_count + ' chunks)'"></option>
+            </template>
+          </select>
+          <input type="text" x-model="chunkFilter" placeholder="搜索 chunk 内容..." class="border rounded-lg px-3 py-2 text-sm flex-1 max-w-xs">
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-600">
+              <tr>
+                <th class="text-left px-3 py-2 w-8"><input type="checkbox" @change="toggleChunkSelectAll($event)"></th>
+                <th class="text-left px-3 py-2">#</th>
+                <th class="text-left px-3 py-2">内容预览</th>
+                <th class="text-left px-3 py-2">章节</th>
+                <th class="text-left px-3 py-2">标签</th>
+                <th class="text-left px-3 py-2">权重</th>
+                <th class="text-left px-3 py-2">启用</th>
+                <th class="text-right px-3 py-2">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="chunk in filteredChunks" :key="chunk.chunk_id">
+                <tr class="border-b hover:bg-gray-50">
+                  <td class="px-3 py-2"><input type="checkbox" x-model="selectedChunkIds" :value="chunk.chunk_id" class="rounded"></td>
+                  <td class="px-3 py-2 text-gray-400" x-text="chunk.metadata?.chunk_index ?? '-'"></td>
+                  <td class="px-3 py-2 max-w-md truncate" x-text="chunk.document?.substring(0, 80) + '...'"></td>
+                  <td class="px-3 py-2 text-xs" x-text="chunk.metadata?.section_title || '-'"></td>
+                  <td class="px-3 py-2 text-xs" x-text="(chunk.metadata?.custom_tags || []).join(', ') || '-'"></td>
+                  <td class="px-3 py-2 text-xs" x-text="chunk.metadata?.weight ?? 1.0"></td>
+                  <td class="px-3 py-2">
+                    <span :class="chunk.metadata?.enabled !== false ? 'text-emerald-500' : 'text-gray-300'" x-text="chunk.metadata?.enabled !== false ? '✓' : '✗'"></span>
+                  </td>
+                  <td class="px-3 py-2 text-right">
+                    <button @click="openChunkEditor(chunk)" class="text-blue-500 hover:text-blue-700 text-xs mr-2">编辑</button>
+                    <button @click="toggleChunk(chunk.chunk_id)" class="text-gray-500 hover:text-gray-700 text-xs mr-2">开关</button>
+                    <button @click="deleteChunk(chunk.chunk_id)" class="text-red-500 hover:text-red-700 text-xs">删除</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <p x-show="chunkDocId && !filteredChunks.length" class="text-center text-gray-400 py-8">无匹配 chunks</p>
+          <p x-show="!chunkDocId" class="text-center text-gray-400 py-8">请先选择一个文档</p>
+        </div>
+      </div>
+
+      <!-- Chunk Editor Modal -->
+      <div x-show="showChunkEditor" class="fixed inset-0 modal-overlay flex items-center justify-center z-50" x-cloak>
+        <div class="bg-white rounded-xl p-6 w-[700px] max-h-[85vh] overflow-y-auto shadow-lg">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="font-bold">编辑 Chunk</h3>
+            <button @click="showChunkEditor = false" class="text-gray-400 hover:text-gray-600">✕</button>
+          </div>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">内容</label>
+              <textarea x-model="editingChunk.content" rows="8" class="w-full border rounded-lg px-3 py-2 text-sm font-mono"></textarea>
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">章节标题</label>
+                <input type="text" x-model="editingChunk.metadata.section_title" class="w-full border rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">文档类型</label>
+                <input type="text" x-model="editingChunk.metadata.doc_type" class="w-full border rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">自定义标签（逗号分隔）</label>
+                <input type="text" x-model="editingChunk.customTagsStr" class="w-full border rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">检索权重</label>
+                <input type="number" step="0.1" min="0.5" max="3" x-model.number="editingChunk.metadata.weight" class="w-full border rounded-lg px-3 py-2 text-sm">
+              </div>
+            </div>
+            <div class="flex items-center gap-2">
+              <input type="checkbox" x-model="editingChunk.metadata.enabled" id="chunkEnabled" class="rounded">
+              <label for="chunkEnabled" class="text-sm">参与检索</label>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 mt-6">
+            <button @click="showChunkEditor = false" class="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">取消</button>
+            <button @click="saveChunk()" class="px-4 py-2 text-sm bg-emerald-500 text-white rounded-lg">保存</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. 分块策略 -->
+    <div x-show="page === 'chunk'" x-cloak>
+      <h2 class="text-2xl font-bold mb-6">分块策略设置</h2>
+
+      <!-- 方案选择 -->
+      <div class="bg-white rounded-xl p-6 shadow-sm border mb-6">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-bold">📋 快速调参方案</h3>
+          <button @click="showProfileUpload = true" class="text-sm text-emerald-600 hover:text-emerald-700 font-medium">+ 上传自定义方案</button>
+        </div>
+        <div class="flex gap-3 items-center">
+          <select x-model="selectedProfile" @change="applyProfile(selectedProfile)" class="flex-1 border rounded-lg px-3 py-2 text-sm">
+            <option value="">选择预设方案...</option>
+            <template x-for="p in profiles" :key="p.id">
+              <option :value="p.id" x-text="p.name + ' — ' + p.description"></option>
+            </template>
+          </select>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl p-6 shadow-sm border mb-6">
+        <h3 class="font-bold mb-4">默认分块参数</h3>
+        <div class="grid grid-cols-3 gap-4">
+          <div>
+            <label class="block text-sm text-gray-500 mb-1">Chunk Size</label>
+            <input type="number" x-model.number="config.chunking.chunk_size" class="w-full border rounded-lg px-3 py-2 text-sm">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-500 mb-1">Chunk Overlap</label>
+            <input type="number" x-model.number="config.chunking.chunk_overlap" class="w-full border rounded-lg px-3 py-2 text-sm">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-500 mb-1">Separator</label>
+            <input type="text" x-model="config.chunking.separator" class="w-full border rounded-lg px-3 py-2 text-sm font-mono">
+          </div>
+        </div>
+        <div class="mt-4 flex items-center gap-2">
+          <input type="checkbox" x-model="config.chunking.enable_contextual_chunking" id="ctxchunk" class="rounded">
+          <label for="ctxchunk" class="text-sm">启用上下文前缀增强</label>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl p-6 shadow-sm border">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="font-bold">文档类型规则</h3>
+          <button @click="addDocTypeRule()" class="text-sm text-emerald-600 hover:text-emerald-700 font-medium">+ 添加规则</button>
+        </div>
+        <div class="space-y-3">
+          <template x-for="(rule, idx) in config.doc_type_rules" :key="idx">
+            <div class="flex gap-3 items-center bg-gray-50 rounded-lg p-3">
+              <div class="flex-1">
+                <label class="block text-xs text-gray-500 mb-1">关键词（逗号分隔）</label>
+                <input type="text" x-model="rule.keywords" class="w-full border rounded px-2 py-1 text-sm">
+              </div>
+              <div class="w-28">
+                <label class="block text-xs text-gray-500 mb-1">Chunk Size</label>
+                <input type="number" x-model.number="rule.chunk_size" class="w-full border rounded px-2 py-1 text-sm">
+              </div>
+              <div class="w-28">
+                <label class="block text-xs text-gray-500 mb-1">Overlap</label>
+                <input type="number" x-model.number="rule.chunk_overlap" class="w-full border rounded px-2 py-1 text-sm">
+              </div>
+              <button @click="config.doc_type_rules.splice(idx, 1)" class="text-red-400 hover:text-red-600 text-lg leading-none mt-4">×</button>
+            </div>
+          </template>
+        </div>
+        <button @click="saveConfig()" class="mt-4 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium">保存 Chunk 配置</button>
+      </div>
+    </div>
+
+    <!-- 5. 模型设置 -->
+    <div x-show="page === 'models'" x-cloak>
+      <h2 class="text-2xl font-bold mb-6">Embedding & Reranker 设置</h2>
+      <div class="bg-white rounded-xl p-6 shadow-sm border mb-6">
+        <p class="text-sm text-gray-500 mb-4">💡 大语言模型 (LLM) 配置已整合至「<a href="#" @click.prevent="page='model_configs'" class="text-emerald-600 hover:underline">模型配置管理</a>」页面</p>
+        <h3 class="font-bold mb-4">Embedding 模型</h3>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm text-gray-500 mb-1">模型名称</label>
+            <input type="text" x-model="config.embedding.model_name" class="w-full border rounded-lg px-3 py-2 text-sm">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-500 mb-1">运行设备</label>
+            <select x-model="config.embedding.device" class="w-full border rounded-lg px-3 py-2 text-sm">
+              <option value="cpu">CPU</option>
+              <option value="cuda">CUDA (GPU)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl p-6 shadow-sm border">
+        <h3 class="font-bold mb-4">重排序模型 (Reranker)</h3>
+        <div class="flex items-center gap-4 mb-4">
+          <input type="checkbox" x-model="config.retrieval.use_rerank" id="usererank" class="rounded">
+          <label for="usererank" class="text-sm font-medium">启用重排序</label>
+        </div>
+        <div x-show="config.retrieval.use_rerank">
+          <label class="block text-sm text-gray-500 mb-1">模型名称</label>
+          <input type="text" x-model="config.retrieval.rerank_model" class="w-full border rounded-lg px-3 py-2 text-sm">
+        </div>
+        <button @click="saveConfig()" class="mt-4 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium">保存模型配置</button>
+      </div>
+    </div>
+
+    <!-- 6. 检索设置 -->
+    <div x-show="page === 'retrieve'" x-cloak>
+      <h2 class="text-2xl font-bold mb-6">检索与混合搜索设置</h2>
+      <div class="bg-white rounded-xl p-6 shadow-sm border mb-6">
+        <div class="flex items-center gap-4 mb-6">
+          <input type="checkbox" x-model="config.hybrid_search.enabled" id="hybrid" class="rounded">
+          <label for="hybrid" class="text-sm font-medium">启用混合检索 (BM25 + Vector)</label>
+        </div>
+        <div class="grid grid-cols-3 gap-4">
+          <div>
+            <label class="block text-sm text-gray-500 mb-1">检索数量 (search_k)</label>
+            <input type="number" x-model.number="config.retrieval.search_k" class="w-full border rounded-lg px-3 py-2 text-sm">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-500 mb-1">分数阈值</label>
+            <input type="number" step="0.01" x-model.number="config.retrieval.score_threshold" class="w-full border rounded-lg px-3 py-2 text-sm">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-500 mb-1">Rerank Top-K</label>
+            <input type="number" x-model.number="config.retrieval.rerank_top_k" class="w-full border rounded-lg px-3 py-2 text-sm">
+          </div>
+        </div>
+      </div>
+      <div class="bg-white rounded-xl p-6 shadow-sm border" x-show="config.hybrid_search.enabled">
+        <h3 class="font-bold mb-4">RRF 融合参数</h3>
+        <div class="grid grid-cols-3 gap-4">
+          <div>
+            <label class="block text-sm text-gray-500 mb-1">BM25 权重</label>
+            <input type="number" step="0.1" min="0" max="1" x-model.number="config.hybrid_search.bm25_weight" class="w-full border rounded-lg px-3 py-2 text-sm">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-500 mb-1">Vector 权重</label>
+            <input type="number" step="0.1" min="0" max="1" x-model.number="config.hybrid_search.vector_weight" class="w-full border rounded-lg px-3 py-2 text-sm">
+          </div>
+          <div>
+            <label class="block text-sm text-gray-500 mb-1">RRF K 值</label>
+            <input type="number" x-model.number="config.hybrid_search.rrf_k" class="w-full border rounded-lg px-3 py-2 text-sm">
+          </div>
+        </div>
+        <button @click="saveConfig()" class="mt-4 px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium">保存检索配置</button>
+      </div>
+    </div>
+
+    <!-- 6.5 模型配置管理 -->
+    <div x-show="page === 'model_configs'" x-cloak x-init="loadModelConfigs()">
+      <h2 class="text-2xl font-bold mb-6">模型配置管理</h2>
+      <div class="bg-white rounded-xl p-6 shadow-sm border mb-6">
+        <div class="flex justify-between items-center mb-4">
+          <p class="text-sm text-gray-500">管理多个 LLM 模型配置，可快速切换当前使用的模型</p>
+          <button @click="openModelEditor()" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium">+ 新建模型配置</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-600">
+              <tr>
+                <th class="text-left px-4 py-3">名称</th>
+                <th class="text-left px-4 py-3">模型</th>
+                <th class="text-left px-4 py-3">Base URL</th>
+                <th class="text-left px-4 py-3">状态</th>
+                <th class="text-right px-4 py-3">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="m in modelConfigs" :key="m.model_id">
+                <tr class="border-b hover:bg-gray-50" :class="m.model_id === activeModelId ? 'bg-emerald-50/50' : ''">
+                  <td class="px-4 py-3 font-medium" x-text="m.name"></td>
+                  <td class="px-4 py-3 font-mono text-xs text-gray-600" x-text="m.model_name || '-'"
+                    :title="`API Key: ${m.api_key || '未设置'}`"></td>
+                  <td class="px-4 py-3 text-xs text-gray-500 truncate max-w-xs" x-text="m.base_url || '-'" :title="m.base_url"></td>
+                  <td class="px-4 py-3">
+                    <span x-show="m.model_id === activeModelId" class="text-xs px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded font-medium">✓ 当前启用</span>
+                    <button x-show="m.model_id !== activeModelId" @click="activateModel(m.model_id)" class="text-xs text-gray-400 hover:text-emerald-600">设为启用</button>
+                  </td>
+                  <td class="px-4 py-3 text-right">
+                    <button @click="openModelEditor(m)" class="text-blue-500 hover:text-blue-700 text-xs mr-2">编辑</button>
+                    <button @click="deleteModel(m.model_id)" class="text-red-500 hover:text-red-700 text-xs">删除</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <p x-show="!modelConfigs.length" class="text-center text-gray-400 py-8">暂无模型配置，点击「新建」添加</p>
+        </div>
+      </div>
+
+      <!-- Model Editor Modal -->
+      <div x-show="showModelEditor" class="fixed inset-0 modal-overlay flex items-center justify-center z-50" x-cloak>
+        <div class="bg-white rounded-xl p-6 w-[600px] max-h-[85vh] overflow-y-auto shadow-lg">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="font-bold" x-text="editingModel.model_id ? '编辑模型配置' : '新建模型配置'"></h3>
+            <button @click="showModelEditor = false" class="text-gray-400 hover:text-gray-600">✕</button>
+          </div>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">配置名称 <span class="text-red-400">*</span></label>
+              <input type="text" x-model="editingModel.name" placeholder="例如：DeepSeek 生产环境" class="w-full border rounded-lg px-3 py-2 text-sm">
+            </div>
+            <div class="grid grid-cols-2 gap-4">
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Base URL</label>
+                <input type="text" x-model="editingModel.base_url" placeholder="https://api.example.com/v1" class="w-full border rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">API Key</label>
+                <input type="password" x-model="editingModel.api_key" placeholder="留空则保持原值" class="w-full border rounded-lg px-3 py-2 text-sm">
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">模型名称</label>
+              <select x-model="editingModel.model_name" @change="editingModel._is_custom = (editingModel.model_name === '__custom__')" class="w-full border rounded-lg px-3 py-2 text-sm">
+                <option value="">-- Select model or custom --</option>
+                <optgroup label="Kimi / Moonshot">
+                  <option value="moonshot-v1-8k">moonshot-v1-8k</option>
+                  <option value="moonshot-v1-32k">moonshot-v1-32k</option>
+                  <option value="moonshot-v1-128k">moonshot-v1-128k</option>
+                  <option value="kimi-k2">kimi-k2 (latest)</option>
+                </optgroup>
+                <optgroup label="DeepSeek">
+                  <option value="deepseek-chat">deepseek-chat (V3)</option>
+                  <option value="deepseek-reasoner">deepseek-reasoner (R1)</option>
+                  <option value="deepseek-v3">deepseek-v3</option>
+                  <option value="deepseek-r1">deepseek-r1</option>
+                </optgroup>
+                <optgroup label="OpenAI">
+                  <option value="gpt-4o">gpt-4o</option>
+                  <option value="gpt-4.1">gpt-4.1</option>
+                  <option value="gpt-4.1-mini">gpt-4.1-mini</option>
+                  <option value="o3">o3</option>
+                  <option value="o4-mini">o4-mini</option>
+                </optgroup>
+                <optgroup label="Qwen">
+                  <option value="qwen-turbo">qwen-turbo</option>
+                  <option value="qwen-plus">qwen-plus</option>
+                  <option value="qwen-max">qwen-max</option>
+                  <option value="qwen3-235b-a22b">qwen3-235b-a22b (latest)</option>
+                </optgroup>
+                <optgroup label="Zhipu (GLM)">
+                  <option value="glm-4-plus">glm-4-plus</option>
+                  <option value="glm-4-flash">glm-4-flash</option>
+                  <option value="glm-4-air">glm-4-air</option>
+                  <option value="glm-4-airx">glm-4-airx (latest)</option>
+                </optgroup>
+                <optgroup label="Baidu (ERNIE)">
+                  <option value="ernie-4.5">ernie-4.5 (latest)</option>
+                  <option value="ernie-4.0-turbo">ernie-4.0-turbo</option>
+                  <option value="ernie-speed-pro">ernie-speed-pro</option>
+                </optgroup>
+                <optgroup label="Anthropic">
+                  <option value="claude-sonnet-4-20250514">claude-sonnet-4 (latest)</option>
+                  <option value="claude-3.5-sonnet">claude-3.5-sonnet</option>
+                  <option value="claude-3-haiku">claude-3-haiku</option>
+                </optgroup>
+                <optgroup label="Google">
+                  <option value="gemini-2.5-flash">gemini-2.5-flash (latest)</option>
+                  <option value="gemini-2.5-pro">gemini-2.5-pro (latest)</option>
+                  <option value="gemini-1.5-pro">gemini-1.5-pro</option>
+                </optgroup>
+                <optgroup label="Ollama (Local)">
+                  <option value="qwen3:14b">qwen3:14b (Ollama)</option>
+                  <option value="qwen3:8b">qwen3:8b (Ollama)</option>
+                  <option value="llama4">llama4 (Ollama)</option>
+                  <option value="phi4">phi4 (Ollama)</option>
+                  <option value="deepseek-r1:8b">deepseek-r1:8b (Ollama)</option>
+                </optgroup>
+                <optgroup label="Other / Custom">
+                  <option value="__custom__">Input custom model name...</option>
+                </optgroup>
+              </select>
+              <input type="text" x-show="editingModel._is_custom" x-model="editingModel._custom_model" placeholder="Input custom model name" class="w-full border rounded-lg px-3 py-2 text-sm mt-2">
+            </div>
+            <div class="grid grid-cols-3 gap-4">
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Temperature</label>
+                <input type="number" step="0.1" min="0" max="2" x-model.number="editingModel.temperature" class="w-full border rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Max Tokens</label>
+                <input type="number" x-model.number="editingModel.max_tokens" class="w-full border rounded-lg px-3 py-2 text-sm">
+              </div>
+              <div>
+                <label class="block text-xs text-gray-500 mb-1">Top P</label>
+                <input type="number" step="0.1" min="0" max="1" x-model.number="editingModel.top_p" class="w-full border rounded-lg px-3 py-2 text-sm">
+              </div>
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">System Prompt</label>
+              <textarea x-model="editingModel.system_prompt" rows="3" placeholder="可选的系统提示词..." class="w-full border rounded-lg px-3 py-2 text-sm font-mono"></textarea>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 mt-6">
+            <button @click="showModelEditor = false" class="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">取消</button>
+            <button @click="saveModel()" class="px-4 py-2 text-sm bg-emerald-500 text-white rounded-lg" x-text="editingModel.model_id ? '保存' : '创建'"></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 7. 检索调试 -->
+    <div x-show="page === 'debug'" x-cloak>
+      <h2 class="text-2xl font-bold mb-6">检索调试</h2>
+
+      <!-- 检索输入 -->
+      <div class="bg-white rounded-xl p-6 shadow-sm border mb-6">
+        <div class="flex gap-3 mb-4">
+          <input type="text" x-model="debugQuery" @keydown.enter="runRetrievalDebug()" placeholder="输入查询语句..." class="flex-1 border rounded-lg px-3 py-2 text-sm">
+          <button @click="runRetrievalDebug()" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium whitespace-nowrap">🔍 检索</button>
+        </div>
+        <div class="flex items-center gap-4 text-xs text-gray-400">
+          <label class="flex items-center gap-1"><input type="checkbox" x-model="debugShowPrompt" checked> 显示 Prompt</label>
+          <span>结果数: <input type="number" x-model.number="debugK" class="w-14 border rounded px-1 text-xs" min="10" max="100" step="10"></span>
+        </div>
+      </div>
+
+      <!-- 加载中 -->
+      <div x-show="debugLoading" class="bg-white rounded-xl p-6 shadow-sm border mb-6 text-center text-gray-400">
+        <div class="spinner mb-2"></div> 检索中...
+      </div>
+
+      <!-- Prompt 预览 -->
+      <div x-show="debugResults && debugResults.prompt && debugShowPrompt" class="bg-white rounded-xl p-6 shadow-sm border mb-6">
+        <h3 class="font-bold text-sm mb-3">📝 最终 Prompt <span class="text-gray-400 font-normal text-xs ml-2" x-text="'~'+debugResults.prompt.total_tokens_estimate+' tokens'"></span></h3>
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <div class="text-xs text-gray-400 mb-1">System Prompt (<span x-text="debugResults.prompt.system_prompt_length"></span>字)</div>
+            <pre class="bg-gray-50 rounded-lg p-3 text-xs font-mono max-h-48 overflow-y-auto whitespace-pre-wrap" x-text="debugResults.prompt.system_prompt || '(空)'"></pre>
+          </div>
+          <div>
+            <div class="text-xs text-gray-400 mb-1">User Message (<span x-text="debugResults.prompt.user_message_length"></span>字, <span x-text="debugResults.prompt.context_chunks"></span>个chunk)</div>
+            <pre class="bg-gray-50 rounded-lg p-3 text-xs font-mono max-h-48 overflow-y-auto whitespace-pre-wrap" x-text="debugResults.prompt.user_message"></pre>
+          </div>
+        </div>
+        <details class="mt-3">
+          <summary class="text-xs text-blue-500 cursor-pointer hover:text-blue-700">📄 完整 Prompt（System + User 拼接，即实际发给 LLM 的内容）</summary>
+          <pre class="bg-gray-900 text-green-400 rounded-lg p-4 text-xs font-mono max-h-96 overflow-y-auto whitespace-pre-wrap mt-2" x-text="debugResults.prompt.full_prompt"></pre>
+        </details>
+      </div>
+
+      <!-- 检索统计 -->
+      <div x-show="debugResults" class="bg-white rounded-xl p-6 shadow-sm border mb-6">
+        <h3 class="font-bold text-sm mb-3">📊 检索统计</h3>
+        <div class="grid grid-cols-4 gap-4 text-center">
+          <div class="bg-blue-50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-blue-600" x-text="debugResults.bm25_results_count"></div>
+            <div class="text-xs text-gray-500">BM25 结果</div>
+          </div>
+          <div class="bg-purple-50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-purple-600" x-text="debugResults.vector_results_count"></div>
+            <div class="text-xs text-gray-500">Vector 结果</div>
+          </div>
+          <div class="bg-green-50 rounded-lg p-3">
+            <div class="text-2xl font-bold text-green-600" x-text="debugResults.final_results_count"></div>
+            <div class="text-xs text-gray-500">融合后结果</div>
+          </div>
+          <div class="bg-amber-50 rounded-lg p-3">
+            <div class="text-sm font-bold text-amber-600" x-text="debugResults.query"></div>
+            <div class="text-xs text-gray-500">查询</div>
+          </div>
+        </div>
+        <div x-show="debugResults.expanded_query" class="mt-3 text-xs text-gray-400">
+          扩展后查询: <span class="text-gray-600" x-text="debugResults.expanded_query"></span>
+        </div>
+        <div x-show="debugResults.detected_cancer_types && debugResults.detected_cancer_types.length" class="mt-2 text-xs">
+          <span class="text-gray-400">检测到癌种: </span>
+          <template x-for="(ct, i) in debugResults.detected_cancer_types">
+            <span class="inline-block bg-red-100 text-red-700 rounded px-1.5 py-0.5 mr-1 text-xs" x-text="ct"></span>
+          </template>
+          <span class="text-gray-400 ml-2">→ effective_k=<span x-text="debugResults.effective_search_k"></span></span>
+        </div>
+      </div>
+
+      <!-- 排名表格 -->
+      <div x-show="debugResults && debugResults.final_results.length" class="bg-white rounded-xl p-6 shadow-sm border mb-6 overflow-x-auto">
+        <h3 class="font-bold text-sm mb-3">🏆 最终排名 (Top <span x-text="debugResults.final_results.length"></span>)</h3>
+        <table class="w-full text-xs">
+          <thead class="bg-gray-50 text-gray-500 sticky top-0">
+            <tr>
+              <th class="text-left px-3 py-2 w-10">#</th>
+              <th class="text-left px-3 py-2">文档</th>
+              <th class="text-center px-3 py-2 w-14">Chunk</th>
+              <th class="text-center px-3 py-2 w-20">BM25</th>
+              <th class="text-center px-3 py-2 w-20">Vector</th>
+              <th class="text-center px-3 py-2 w-20">RRF</th>
+              <th class="text-center px-3 py-2 w-20">Rerank</th>
+              <th class="text-center px-3 py-2 w-20">🏁 最终</th>
+              <th class="text-left px-3 py-2">内容预览</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="r in debugResults.final_results" :key="r.rank">
+              <tr class="border-b hover:bg-gray-50" :class="r.rank <= 5 ? 'bg-amber-50' : ''">
+                <td class="px-3 py-2 font-bold" x-text="r.rank"></td>
+                <td class="px-3 py-2 max-w-40 truncate" :title="r.document_title" x-text="r.document_title || r.source"></td>
+                <td class="px-3 py-2 text-center text-gray-400" x-text="r.chunk_index"></td>
+                <td class="px-3 py-2 text-center" :class="r.bm25_score > 0 ? 'text-blue-600 font-medium' : 'text-gray-300'" x-text="r.bm25_score ? r.bm25_score.toFixed(4) : '-'"></td>
+                <td class="px-3 py-2 text-center" :class="r.vector_score > 0 ? 'text-purple-600 font-medium' : 'text-gray-300'" x-text="r.vector_score ? r.vector_score.toFixed(4) : '-'"></td>
+                <td class="px-3 py-2 text-center" :class="r.rrf_score > 0 ? 'text-emerald-600 font-medium' : 'text-gray-300'" x-text="r.rrf_score ? r.rrf_score.toFixed(4) : '-'"></td>
+                <td class="px-3 py-2 text-center" :class="r.rerank_score > 0 ? 'text-orange-600 font-medium' : 'text-gray-300'" x-text="r.rerank_score ? r.rerank_score.toFixed(4) : '-'"></td>
+                <td class="px-3 py-2 text-center font-bold" :class="r.final_score >= 0.5 ? 'text-green-600' : r.final_score >= 0.2 ? 'text-amber-600' : 'text-red-500'" x-text="r.final_score.toFixed(4)"></td>
+                <td class="px-3 py-2 max-w-80 truncate text-gray-500" :title="r.preview" x-text="r.preview"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- PDF 源文件映射 -->
+    <div x-show="page === 'pdf_map'" x-cloak x-init="loadPdfMap()">
+      <h2 class="text-2xl font-bold mb-6">🗂️ PDF 源文件映射</h2>
+
+      <!-- 汇总 -->
+      <div x-show="pdfMap" class="bg-white rounded-xl p-6 shadow-sm border mb-6">
+        <h3 class="font-bold text-sm mb-3">📊 汇总</h3>
+        <div class="grid grid-cols-7 gap-3 text-center text-xs">
+          <div class="bg-slate-50 rounded-lg p-3">
+            <div class="text-xl font-bold text-slate-700" x-text="pdfMap.pdf_count"></div>
+            <div class="text-gray-400 mt-1">原始PDF (A)</div>
+          </div>
+          <div class="bg-blue-50 rounded-lg p-3">
+            <div class="text-xl font-bold text-blue-600" x-text="pdfMap.total_md_files"></div>
+            <div class="text-gray-400 mt-1">MD文件 (B)</div>
+          </div>
+          <div class="bg-green-50 rounded-lg p-3">
+            <div class="text-xl font-bold text-green-600" x-text="pdfMap.summary.C_has_chunks"></div>
+            <div class="text-gray-400 mt-1">已分块 (C)</div>
+          </div>
+          <div class="bg-gray-50 rounded-lg p-3">
+            <div class="text-xl font-bold text-gray-500" x-text="pdfMap.summary.D_needs_chunks"></div>
+            <div class="text-gray-400 mt-1">待分块 (D)</div>
+          </div>
+          <div class="bg-emerald-50 rounded-lg p-3">
+            <div class="text-xl font-bold text-emerald-600" x-text="pdfMap.summary.E_in_db"></div>
+            <div class="text-gray-400 mt-1">已入库 (E)</div>
+          </div>
+          <div class="bg-amber-50 rounded-lg p-3">
+            <div class="text-xl font-bold text-amber-600" x-text="pdfMap.summary.F_needs_index"></div>
+            <div class="text-gray-400 mt-1">待入库 (F)</div>
+          </div>
+          <div class="bg-purple-50 rounded-lg p-3">
+            <div class="text-xl font-bold text-purple-600" x-text="pdfMap.total_chunks_in_db"></div>
+            <div class="text-gray-400 mt-1">ChromaDB Chunks</div>
+          </div>
+        </div>
+        <div class="mt-3 text-xs text-gray-400">
+          C+D=B: <span x-text="pdfMap.relations_valid.C_plus_D_eq_B ? '✅' : '❌'"></span>
+          &nbsp;|&nbsp;
+          E+F=C: <span x-text="pdfMap.relations_valid.E_plus_F_eq_C ? '✅' : '❌'"></span>
+        </div>
+      </div>
+
+      <!-- 大表 -->
+      <div x-show="pdfMap" class="bg-white rounded-xl p-6 shadow-sm border overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead class="bg-gray-50 text-gray-500 sticky top-0">
+            <tr>
+              <th class="text-left px-3 py-2">原始 PDF (A)</th>
+              <th class="text-center px-2 py-2 w-14">B</th>
+              <th class="text-center px-2 py-2 w-14">C</th>
+              <th class="text-center px-2 py-2 w-14">D</th>
+              <th class="text-center px-2 py-2 w-14">E</th>
+              <th class="text-center px-2 py-2 w-14">F</th>
+              <th class="text-center px-2 py-2 w-14">Chunks</th>
+              <th class="text-left px-3 py-2">页范围</th>
+              <th class="text-left px-3 py-2 w-32">状态</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="p in pdfMap.pdfs" :key="p.pdf_name">
+              <tr class="border-b hover:bg-gray-50">
+                <td class="px-3 py-2 font-medium max-w-56 truncate" :title="p.pdf_name" x-text="p.pdf_name"></td>
+                <td class="px-2 py-2 text-center font-medium" x-text="p.B_md_files"></td>
+                <td class="px-2 py-2 text-center text-green-600" x-text="p.C_has_chunks"></td>
+                <td class="px-2 py-2 text-center text-gray-400" x-text="p.D_needs_chunks || '-'"></td>
+                <td class="px-2 py-2 text-center text-emerald-600 font-medium" x-text="p.E_in_db || '-'"></td>
+                <td class="px-2 py-2 text-center text-amber-600" x-text="p.F_needs_index || '-'"></td>
+                <td class="px-2 py-2 text-center text-purple-600 text-xs" x-text="p.total_chunks_in_db || '-'"></td>
+                <td class="px-3 py-2 text-gray-500 text-xs" x-text="p.page_range"></td>
+                <td class="px-3 py-2">
+                  <span x-show="p.E_in_db === p.B_md_files" class="text-emerald-600 text-xs">✅ 完成</span>
+                  <span x-show="p.E_in_db > 0 && p.E_in_db < p.B_md_files" class="text-amber-600 text-xs">⏳ 部分</span>
+                  <span x-show="p.C_has_chunks > 0 && p.E_in_db === 0" class="text-blue-600 text-xs">📦 待入库</span>
+                  <span x-show="p.C_has_chunks === 0" class="text-gray-400 text-xs">⬜ 未处理</span>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+      <div x-show="!pdfMap" class="bg-white rounded-xl p-12 shadow-sm border text-center text-gray-400">
+        <div class="spinner mb-3"></div> 加载中...
+      </div>
+    </div>
+
+    <!-- 8. Prompt 版本管理 -->
+    <div x-show="page === 'prompt'" x-cloak x-init="loadPrompts()">
+      <h2 class="text-2xl font-bold mb-6">Prompt 版本管理</h2>
+      <div class="bg-white rounded-xl p-6 shadow-sm border mb-6">
+        <div class="flex justify-between items-center mb-4">
+          <p class="text-sm text-gray-500">管理多个 System Prompt 版本，勾选默认版本生效</p>
+          <button @click="openPromptEditor()" class="px-4 py-2 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium">+ 新建 Prompt</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-600">
+              <tr><th class="text-left px-4 py-3">名称</th><th class="text-left px-4 py-3">默认</th><th class="text-left px-4 py-3">更新时间</th><th class="text-right px-4 py-3">操作</th></tr>
+            </thead>
+            <tbody>
+              <template x-for="p in prompts" :key="p.id">
+                <tr class="border-b hover:bg-gray-50">
+                  <td class="px-4 py-3 font-medium" x-text="p.name"></td>
+                  <td class="px-4 py-3">
+                    <span x-show="p.is_default" class="text-emerald-600 text-xs font-bold">✓ 默认</span>
+                    <button x-show="!p.is_default" @click="setDefaultPrompt(p.id)" class="text-xs text-gray-400 hover:text-emerald-600">设为默认</button>
+                  </td>
+                  <td class="px-4 py-3 text-gray-500 text-xs" x-text="new Date(p.updated_at).toLocaleString()"></td>
+                  <td class="px-4 py-3 text-right">
+                    <button @click="openPromptEditor(p)" class="text-blue-500 hover:text-blue-700 text-xs mr-2">编辑</button>
+                    <button @click="deletePrompt(p.id)" class="text-red-500 hover:text-red-700 text-xs">删除</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <p x-show="!prompts.length" class="text-center text-gray-400 py-8">暂无 Prompt 版本</p>
+        </div>
+      </div>
+
+      <!-- Prompt Editor Modal -->
+      <div x-show="showPromptEditor" class="fixed inset-0 modal-overlay flex items-center justify-center z-50" x-cloak>
+        <div class="bg-white rounded-xl p-6 w-[700px] max-h-[85vh] overflow-y-auto shadow-lg">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="font-bold" x-text="promptEditor.id ? '编辑 Prompt' : '新建 Prompt'"></h3>
+            <button @click="showPromptEditor = false" class="text-gray-400 hover:text-gray-600">✕</button>
+          </div>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">名称</label>
+              <input type="text" x-model="promptEditor.name" class="w-full border rounded-lg px-3 py-2 text-sm">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">内容</label>
+              <textarea x-model="promptEditor.content" rows="12" class="w-full border rounded-lg px-3 py-2 text-sm font-mono"></textarea>
+            </div>
+            <div class="flex items-center gap-2">
+              <input type="checkbox" x-model="promptEditor.is_default" id="promptDefault" class="rounded">
+              <label for="promptDefault" class="text-sm">设为默认版本</label>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 mt-6">
+            <button @click="showPromptEditor = false" class="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">取消</button>
+            <button @click="savePrompt()" class="px-4 py-2 text-sm bg-emerald-500 text-white rounded-lg">保存</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Profile Upload Modal -->
+      <div x-show="showProfileUpload" class="fixed inset-0 modal-overlay flex items-center justify-center z-50" x-cloak>
+        <div class="bg-white rounded-xl p-6 w-[600px] max-h-[85vh] overflow-y-auto shadow-lg">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="font-bold">上传自定义调参方案</h3>
+            <button @click="showProfileUpload = false" class="text-gray-400 hover:text-gray-600">✕</button>
+          </div>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">方案名称</label>
+              <input type="text" x-model="profileUpload.name" placeholder="例如：我的自定义方案" class="w-full border rounded-lg px-3 py-2 text-sm">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">方案描述</label>
+              <input type="text" x-model="profileUpload.description" placeholder="简要说明适用场景" class="w-full border rounded-lg px-3 py-2 text-sm">
+            </div>
+            <div>
+              <label class="block text-xs text-gray-500 mb-1">方案内容（JSON 格式）</label>
+              <textarea x-model="profileUpload.content" rows="14" placeholder='{"chunking": {"chunk_size": 1000}, "retrieval": {"search_k": 20}}' class="w-full border rounded-lg px-3 py-2 text-sm font-mono"></textarea>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-3 text-xs text-gray-500">
+              <p class="font-medium mb-1">💡 提示</p>
+              <p>JSON 结构与 PUT /config 的 data 字段一致，只需填写要覆盖的参数即可。例如：</p>
+              <pre class="mt-1 text-[11px] bg-gray-100 rounded p-2">{"chunking": {"chunk_size": 1200, "chunk_overlap": 250},
+ "doc_type_rules": [{"keywords": ["指南"], "chunk_size": 1500, "chunk_overlap": 300}]}</pre>
+            </div>
+          </div>
+          <div class="flex justify-end gap-2 mt-6">
+            <button @click="showProfileUpload = false" class="px-4 py-2 text-sm text-gray-500 hover:text-gray-700">取消</button>
+            <button @click="uploadProfile()" class="px-4 py-2 text-sm bg-emerald-500 text-white rounded-lg">上传并应用</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 会话管理 -->
+    <div x-show="page === 'sessions'" x-cloak>
+      <h2 class="text-2xl font-bold mb-6">会话管理</h2>
+      <div class="bg-white rounded-xl p-6 shadow-sm border">
+        <div class="flex justify-between items-center mb-4">
+          <p class="text-sm text-gray-500">管理所有患者会话记录</p>
+          <button @click="clearAllSessions()" class="text-sm text-red-500 hover:text-red-700">清空全部会话</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-600">
+              <tr><th class="text-left px-4 py-3 rounded-l-lg">标题</th><th class="text-left px-4 py-3">ID</th><th class="text-left px-4 py-3">消息数</th><th class="text-left px-4 py-3">更新时间</th><th class="text-right px-4 py-3 rounded-r-lg">操作</th></tr>
+            </thead>
+            <tbody>
+              <template x-for="s in allSessions" :key="s.session_id">
+                <tr class="border-b hover:bg-gray-50">
+                  <td class="px-4 py-3 font-medium" x-text="s.title"></td>
+                  <td class="px-4 py-3 font-mono text-xs text-gray-400" x-text="s.session_id"></td>
+                  <td class="px-4 py-3" x-text="s.messages?.length ?? 0"></td>
+                  <td class="px-4 py-3 text-gray-500" x-text="new Date(s.updated_at * 1000).toLocaleString()"></td>
+                  <td class="px-4 py-3 text-right">
+                    <button @click="deleteSession(s.session_id)" class="text-red-500 hover:text-red-700 text-xs">删除</button>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <p x-show="!allSessions.length" class="text-center text-gray-400 py-8">暂无会话</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 10. 用户管理 -->
+    <div x-show="page === 'users'" x-cloak x-init="loadUsers()">
+      <h2 class="text-2xl font-bold mb-6">👥 用户管理</h2>
+
+      <!-- Stats cards -->
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <div class="text-sm text-gray-500">注册用户总数</div>
+          <div class="text-xl font-bold text-indigo-600 mt-1" x-text="users.length"></div>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <div class="text-sm text-gray-500">今日活跃</div>
+          <div class="text-xl font-bold text-emerald-600 mt-1" x-text="users.filter(u => new Date(u.latest_activity_at).toDateString() === new Date().toDateString()).length"></div>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <div class="text-sm text-gray-500">总消息数</div>
+          <div class="text-xl font-bold text-blue-600 mt-1" x-text="users.reduce((s,u) => s + (u.message_count || 0), 0)"></div>
+        </div>
+        <div class="bg-white rounded-xl p-4 shadow-sm border">
+          <div class="text-sm text-gray-500">本周新增</div>
+          <div class="text-xl font-bold text-purple-600 mt-1" x-text="(() => { const weekAgo = new Date(Date.now() - 7*24*60*60*1000); return users.filter(u => new Date(u.created_at) > weekAgo).length })()"></div>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
+        <div class="flex justify-between items-center p-4 border-b">
+          <h3 class="font-bold">注册用户列表</h3>
+          <button @click="loadUsers()" class="text-sm text-emerald-600 hover:text-emerald-700 font-medium">🔄 刷新</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-600 text-xs uppercase">
+              <tr>
+                <th class="text-left px-4 py-3">用户名</th>
+                <th class="text-left px-4 py-3">注册时间</th>
+                <th class="text-left px-4 py-3">最后登录</th>
+                <th class="text-left px-4 py-3">最新动态</th>
+                <th class="text-left px-4 py-3">消息数</th>
+                <th class="text-left px-4 py-3">状态</th>
+                <th class="text-center px-4 py-3">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="u in users" :key="u.username">
+                <tr class="border-b hover:bg-gray-50">
+                  <td class="px-4 py-3 font-medium" x-text="u.username"></td>
+                  <td class="px-4 py-3 text-gray-500" x-text="new Date(u.created_at).toLocaleString()"></td>
+                  <td class="px-4 py-3 text-gray-500" x-text="u.last_login_at ? new Date(u.last_login_at).toLocaleString() : '-'"></td>
+                  <td class="px-4 py-3 text-gray-500" x-text="u.latest_activity_at ? new Date(u.latest_activity_at).toLocaleString() : '-'"></td>
+                  <td class="px-4 py-3">
+                    <span class="px-2 py-0.5 rounded-full text-xs font-medium" :class="u.message_count > 0 ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'" x-text="u.message_count"></span>
+                  </td>
+                  <td class="px-4 py-3">
+                    <div class="flex items-center gap-1.5">
+                      <span x-show="u.frozen" class="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">🚫 已冻结</span>
+                      <span class="px-2 py-0.5 rounded-full text-xs font-medium" x-text="(() => {
+                        const now = new Date();
+                        const act = new Date(u.latest_activity_at);
+                        const hours = (now - act) / (1000 * 60 * 60);
+                        if (hours < 1) return '🟢 在线';
+                        if (hours < 24) return '🟡 今日活跃';
+                        if (hours < 168) return '🔵 本周活跃';
+                        return '⚪ 离线';
+                      })()"></span>
+                  </td>
+                  <td class="px-4 py-3 text-center">
+                    <div class="flex items-center justify-center gap-1">
+                      <button @click="dispatchCode(u.username)" class="text-xs px-3 py-1.5 bg-purple-500 hover:bg-purple-600 text-white rounded font-medium transition">🎫 派发</button>
+                      <button x-show="!u.frozen" @click="freezeUser(u.username)" class="text-xs px-3 py-1.5 bg-yellow-500 hover:bg-yellow-600 text-white rounded font-medium transition">🔒 冻结</button>
+                      <button x-show="u.frozen" @click="unfreezeUser(u.username)" class="text-xs px-3 py-1.5 bg-green-500 hover:bg-green-600 text-white rounded font-medium transition">🔓 解冻</button>
+                      <button @click="deleteUser(u.username)" class="text-xs px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded font-medium transition">🗑 删除</button>
+                    </div>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+          <p x-show="!users.length" class="text-center text-gray-400 py-8">暂无注册用户</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Dispatch Code Modal -->
+    <div x-show="dispatchModal.show" class="fixed inset-0 modal-overlay flex items-center justify-center z-50" x-cloak
+      @click.self="dispatchModal.show = false">
+      <div class="bg-white rounded-xl p-6 w-96 shadow-lg">
+        <div class="text-center mb-4">
+          <div class="text-4xl mb-2">🎫</div>
+          <h3 class="font-bold text-lg">付费激活码</h3>
+          <p class="text-sm text-gray-500 mt-1">用户：<span x-text="dispatchModal.username" class="font-mono font-medium text-gray-700"></span></p>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-4 mb-4 text-center">
+          <div class="font-mono text-lg tracking-widest font-bold text-purple-600 select-all" x-text="dispatchModal.code"></div>
+        </div>
+        <div class="flex justify-center gap-3">
+          <button @click="copyActivationCode()" class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg text-sm font-medium">📋 复制激活码</button>
+          <button @click="dispatchModal.show = false" class="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-lg text-sm">关闭</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Change Password Modal -->
+    <div x-show="showChangePassword" class="fixed inset-0 modal-overlay flex items-center justify-center z-50" x-cloak>
+      <div class="bg-white rounded-xl p-6 w-80 shadow-lg">
+        <h3 class="font-bold mb-4">修改密码</h3>
+        <div class="space-y-3">
+          <input type="password" name="admin-old-password" autocomplete="current-password" x-model="passwordForm.old_password" placeholder="旧密码" class="w-full border rounded-lg px-3 py-2 text-sm">
+          <input type="password" name="admin-new-password" autocomplete="new-password" x-model="passwordForm.new_password" placeholder="新密码（至少6位）" class="w-full border rounded-lg px-3 py-2 text-sm">
+          <input type="password" name="admin-confirm-password" autocomplete="new-password" x-model="passwordForm.confirm_password" placeholder="确认新密码" class="w-full border rounded-lg px-3 py-2 text-sm">
+        </div>
+        <div class="flex justify-end gap-2 mt-4">
+          <button @click="showChangePassword = false" class="px-3 py-1.5 text-sm text-gray-500 hover:text-gray-700">取消</button>
+          <button @click="changePassword()" class="px-3 py-1.5 text-sm bg-emerald-500 text-white rounded-lg">确认</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script src="/admin/assets/admin-i18n.js?v=1.0"></script>
+<script src="/admin/assets/admin.js?v=2.9"></script>
+</body>
+</html>

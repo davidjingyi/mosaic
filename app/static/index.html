@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="format-detection" content="telephone=no">
+<title>Onco-RAG 患者端</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+/* Base */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+/* Chat bubbles */
+.chat-bubble-user {
+  background: #10b981;
+  color: white;
+  border-radius: 16px 16px 4px 16px;
+}
+.chat-bubble-assistant {
+  background: #f3f4f6;
+  color: #111;
+  border-radius: 16px 16px 16px 4px;
+}
+
+/* Scrollbar hide */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Drawer overlay */
+.drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  z-index: 40;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.25s ease, visibility 0.25s ease;
+}
+.drawer-overlay.open {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* Drawer panel */
+.drawer-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 280px;
+  background: white;
+  z-index: 50;
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+}
+.drawer-panel.open {
+  transform: translateX(0);
+}
+
+/* Mobile input area fixed bottom */
+.mobile-input-area {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: white;
+  border-top: 1px solid #e5e7eb;
+  padding: 8px 12px 12px;
+  z-index: 20;
+  transition: bottom 0.2s ease;
+}
+
+/* Mobile header */
+.mobile-header {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 52px;
+  background: white;
+  border-bottom: 1px solid #e5e7eb;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+}
+
+/* Mobile chat messages area */
+.mobile-messages {
+  position: fixed;
+  top: 52px;
+  left: 0;
+  right: 0;
+  bottom: 72px;
+  overflow-y: auto;
+  padding: 12px 12px 16px;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Touch-friendly buttons */
+.btn-touch {
+  min-height: 44px;
+  min-width: 44px;
+}
+
+/* ================= DESKTOP (≥768px) ================= */
+@media (min-width: 768px) {
+  .mobile-only { display: none !important; }
+
+  .desktop-layout {
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .desktop-sidebar {
+    width: 260px;
+    background: white;
+    border-right: 1px solid #e5e7eb;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .desktop-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .desktop-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+  }
+
+  .desktop-input {
+    background: white;
+    border-top: 1px solid #e5e7eb;
+    padding: 16px 24px;
+  }
+}
+
+/* ================= MOBILE (<768px) ================= */
+@media (max-width: 767px) {
+  .desktop-only { display: none !important; }
+
+  .mobile-layout {
+    height: 100vh;
+    overflow: hidden;
+    background: #f9fafb;
+  }
+
+  /* Welcome message style */
+  .welcome-box {
+    text-align: center;
+    padding: 40px 20px;
+  }
+  .welcome-box h3 {
+    font-size: 18px;
+    color: #374151;
+    margin-bottom: 8px;
+  }
+  .welcome-box p {
+    font-size: 14px;
+    color: #9ca3af;
+  }
+}
+</style>
+</head>
+
+<body>
+
+<!-- ====== LOGIN OVERLAY ====== -->
+<div id="auth-overlay" style="position:fixed;inset:0;z-index:100;background:#0f172a;display:flex;align-items:center;justify-content:center;flex-direction:column">
+  <div style="background:#fff;border-radius:16px;padding:32px 28px;width:360px;max-width:90vw;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+    <h2 style="font-size:22px;font-weight:700;text-align:center;margin-bottom:4px;color:#111">🩺 Onco-RAG</h2>
+    <p id="auth-title" style="text-align:center;color:#666;font-size:14px;margin-bottom:20px">登录</p>
+    <input id="auth-username" type="text" placeholder="用户名" style="width:100%;padding:10px 14px;border:1px solid #ddd;border-radius:10px;font-size:15px;margin-bottom:10px;box-sizing:border-box" autocomplete="username">
+    <input id="auth-password" type="password" placeholder="密码" style="width:100%;padding:10px 14px;border:1px solid #ddd;border-radius:10px;font-size:15px;margin-bottom:6px;box-sizing:border-box" autocomplete="current-password">
+    <p id="auth-error" style="color:#ef4444;font-size:13px;min-height:20px;margin-bottom:6px"></p>
+    <button id="auth-submit" style="width:100%;padding:11px;background:#10b981;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;margin-bottom:12px">登录</button>
+    <p style="text-align:center;font-size:13px;color:#888">
+      <span id="auth-switch-text">还没有账号？</span>
+      <a id="auth-switch" href="#" style="color:#10b981;text-decoration:none;font-weight:600">立即注册</a>
+    </p>
+    <div style="margin-top:16px;padding:10px 12px;background:#fef3c7;border-radius:8px;border:1px solid #fcd34d">
+      <p style="font-size:12px;color:#92400e;text-align:center;margin:0;line-height:1.6">
+        ⚠️ <strong>免责声明：</strong>AI辅助答疑仅供参考，不能代替专业医疗诊断、治疗和建议。如有健康问题，请及时就医。
+      </p>
+      <p style="font-size:12px;color:#92400e;text-align:center;margin:4px 0 0 0;line-height:1.6">
+        📋 本网页功能仅供测试使用，不作为任何意见建议。
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Auth UI logic ──
+var _authPathBase = window.location.pathname.startsWith('/oncorag') ? '/oncorag' : '';
+var _authAPI = _authPathBase + '/api/v1';
+var _authMode = 'login';
+var _authToken = localStorage.getItem('oncorag_token');
+var _authUser = localStorage.getItem('oncorag_user');
+
+function authSetMode(mode) {
+  _authMode = mode;
+  document.getElementById('auth-title').textContent = mode === 'login' ? '登录' : '注册';
+  document.getElementById('auth-submit').textContent = mode === 'login' ? '登录' : '注册';
+  document.getElementById('auth-switch-text').textContent = mode === 'login' ? '还没有账号？' : '已有账号？';
+  document.getElementById('auth-switch').textContent = mode === 'login' ? '立即注册' : '去登录';
+  document.getElementById('auth-error').textContent = '';
+}
+
+document.getElementById('auth-switch').addEventListener('click', function(e) {
+  e.preventDefault();
+  authSetMode(_authMode === 'login' ? 'register' : 'login');
+});
+
+async function authSubmit() {
+  var u = document.getElementById('auth-username').value.trim();
+  var p = document.getElementById('auth-password').value;
+  var err = document.getElementById('auth-error');
+  if (!u || !p) { err.textContent = '请填写用户名和密码'; return; }
+  var btn = document.getElementById('auth-submit');
+  btn.disabled = true; btn.textContent = '请稍候...';
+  try {
+    var endpoint = _authMode === 'login' ? _authAPI + '/auth/user-login' : _authAPI + '/auth/register';
+    var res = await fetch(endpoint, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({username:u, password:p})
+    });
+    var data = await res.json();
+    if (res.ok && data.access_token) {
+      _authToken = data.access_token;
+      _authUser = data.username;
+      localStorage.setItem('oncorag_token', _authToken);
+      localStorage.setItem('oncorag_user', _authUser);
+      document.getElementById('auth-overlay').style.display = 'none';
+      if (typeof app !== 'undefined' && app.init) app.init();
+    } else {
+      err.textContent = data.detail || '操作失败，请重试';
+    }
+  } catch(e) {
+    err.textContent = '网络错误，请检查连接';
+  }
+  btn.disabled = false;
+  btn.textContent = _authMode === 'login' ? '登录' : '注册';
+}
+
+document.getElementById('auth-submit').addEventListener('click', authSubmit);
+document.getElementById('auth-password').addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') authSubmit();
+});
+
+// Auto-login if token exists
+if (_authToken) {
+  (async function() {
+    try {
+      var res = await fetch(_authAPI + '/auth/user-me', {headers:{'Authorization':'Bearer '+_authToken}});
+      if (res.ok) {
+        var data = await res.json();
+        _authUser = data.username;
+        document.getElementById('auth-overlay').style.display = 'none';
+      } else {
+        localStorage.removeItem('oncorag_token');
+        localStorage.removeItem('oncorag_user');
+      }
+    } catch(e) {}
+  })();
+}
+</script>
+<!-- ====== END LOGIN OVERLAY ====== -->
+
+<!-- ==================== DESKTOP LAYOUT ==================== -->
+<div class="desktop-layout desktop-only">
+
+  <!-- Sidebar: Session List -->
+  <aside class="desktop-sidebar">
+    <div class="p-4 border-b">
+      <h1 class="text-lg font-bold text-emerald-600">🩺 Onco-RAG</h1>
+      <p class="text-xs text-gray-400 mt-1">患者问答窗口</p>
+    </div>
+    <div class="p-3">
+      <button onclick="app.newSession()" class="w-full py-2 px-4 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg text-sm font-medium transition">
+        + 新建会话
+      </button>
+    </div>
+    <div id="desktop-session-list" class="flex-1 overflow-y-auto p-3 space-y-2 scrollbar-hide">
+      <!-- sessions injected here -->
+    </div>
+  </aside>
+
+  <!-- Main Chat Area -->
+  <main class="desktop-main">
+    <!-- Header -->
+    <header class="bg-white border-b px-6 py-3 flex items-center justify-between shrink-0">
+      <h2 id="desktop-current-title" class="text-sm font-medium text-gray-700">新会话</h2>
+      <span class="text-xs text-gray-400" id="desktop-msg-count">0 条消息</span>
+    </header>
+
+    <!-- Messages -->
+    <div id="desktop-chat-messages" class="desktop-messages space-y-4">
+      <div class="text-center text-gray-400 text-sm mt-10">
+        👋 欢迎来到肿瘤智能答疑系统<br>请在下方输入您的问题
+        <div style="margin-top:16px;padding:10px 14px;background:#fef3c7;border-radius:8px;border:1px solid #fcd34d;display:inline-block;max-width:480px">
+          <p style="font-size:12px;color:#92400e;margin:0;line-height:1.6;text-align:center">
+            ⚠️ <strong>免责声明：</strong>AI辅助答疑仅供参考，不能代替专业医疗诊断、治疗和建议。如有健康问题，请及时就医。
+          </p>
+          <p style="font-size:12px;color:#92400e;margin:4px 0 0 0;line-height:1.6;text-align:center">
+            📋 本网页功能仅供测试使用，不作为任何意见建议。
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Input -->
+    <div class="desktop-input">
+      <!-- Prompt Selector -->
+      <div class="max-w-3xl mx-auto mb-2">
+        <select class="prompt-select text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-500 bg-white focus:outline-none focus:border-emerald-400"
+          onchange="app.setPrompt(this.value)">
+          <option value="">加载中...</option>
+        </select>
+      </div>
+      <div class="max-w-3xl mx-auto flex gap-3">
+        <textarea id="desktop-chat-input" rows="2" placeholder="请输入您的问题..."
+          class="flex-1 resize-none border rounded-xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"></textarea>
+        <button onclick="app.send()" id="desktop-btn-send"
+          class="px-6 bg-emerald-500 hover:bg-emerald-600 text-white rounded-xl font-medium transition">
+          发送
+        </button>
+      </div>
+    </div>
+  </main>
+
+</div>
+
+<!-- ==================== MOBILE LAYOUT ==================== -->
+<div class="mobile-layout mobile-only">
+
+  <!-- Header -->
+  <header class="mobile-header">
+    <div class="flex items-center gap-2">
+      <span class="text-lg">🩺</span>
+      <div>
+        <h1 class="text-sm font-bold text-gray-800 leading-tight">Onco-RAG</h1>
+        <p class="text-[11px] text-gray-400 leading-tight" id="mobile-current-title">新会话</p>
+      </div>
+    </div>
+    <button onclick="app.toggleDrawer()" class="btn-touch flex items-center justify-center p-2 rounded-lg active:bg-gray-100">
+      <svg class="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/>
+      </svg>
+    </button>
+  </header>
+
+  <!-- Messages -->
+  <div id="mobile-chat-messages" class="mobile-messages space-y-3">
+    <div class="welcome-box">
+      <div class="text-4xl mb-3">👋</div>
+      <h3>欢迎来到肿瘤智能答疑系统</h3>
+      <p>请在下方输入您的问题，我将尽力为您解答</p>
+      <div style="margin-top:16px;padding:10px 14px;background:#fef3c7;border-radius:8px;border:1px solid #fcd34d;display:inline-block;max-width:360px">
+        <p style="font-size:12px;color:#92400e;margin:0;line-height:1.6;text-align:center">
+          ⚠️ <strong>免责声明：</strong>AI辅助答疑仅供参考，不能代替专业医疗诊断、治疗和建议。如有健康问题，请及时就医。
+        </p>
+        <p style="font-size:12px;color:#92400e;margin:4px 0 0 0;line-height:1.6;text-align:center">
+          📋 本网页功能仅供测试使用，不作为任何意见建议。
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Input -->
+  <div id="mobile-input-area" class="mobile-input-area">
+    <!-- Prompt Selector (mobile) -->
+    <div class="mb-2 px-4">
+      <select class="prompt-select text-xs border border-gray-200 rounded-lg px-2 py-1.5 text-gray-500 bg-white focus:outline-none focus:border-emerald-400"
+        onchange="app.setPrompt(this.value)">
+        <option value="">加载中...</option>
+      </select>
+    </div>
+    <div class="flex gap-2 items-end">
+      <textarea id="mobile-chat-input" rows="1" placeholder="请输入您的问题..."
+        class="flex-1 resize-none border rounded-2xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 max-h-[120px] bg-gray-50"></textarea>
+      <button onclick="app.send()" id="mobile-btn-send"
+        class="btn-touch px-5 bg-emerald-500 active:bg-emerald-600 text-white rounded-2xl font-medium transition shrink-0 flex items-center justify-center h-[44px]">
+        发送
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<!-- ==================== DRAWER (Mobile Session List) ==================== -->
+<div id="drawer-overlay" class="drawer-overlay mobile-only" onclick="app.closeDrawer()"></div>
+<div id="drawer-panel" class="drawer-panel mobile-only">
+  <div class="p-4 border-b flex items-center justify-between">
+    <h2 class="font-bold text-gray-800">会话列表</h2>
+    <button onclick="app.closeDrawer()" class="btn-touch p-2 rounded-lg active:bg-gray-100">
+      <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+      </svg>
+    </button>
+  </div>
+  <div class="p-3">
+    <button onclick="app.newSession(); app.closeDrawer();" class="w-full py-2.5 px-4 bg-emerald-500 active:bg-emerald-600 text-white rounded-xl text-sm font-medium transition">
+      + 新建会话
+    </button>
+  </div>
+  <div id="mobile-session-list" class="flex-1 overflow-y-auto p-3 space-y-2 scrollbar-hide">
+    <!-- sessions injected here -->
+  </div>
+</div>
+
+<script src="/assets/app.js"></script>
+</body>
+</html>

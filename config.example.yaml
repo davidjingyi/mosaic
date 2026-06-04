@@ -1,0 +1,128 @@
+chunking:
+  chunk_size: 1500
+  chunk_overlap: 150
+  separator: '
+
+
+    '
+  enable_contextual_chunking: true
+  contextual_prefix_format: '[文档: {doc_title}][分类: {path_tags}][章节: {section}][位置: {position}/{total}]\n{content}'
+doc_type_rules: []
+embedding:
+  model_name: BAAI/bge-m3
+  device: cpu
+  normalize_embeddings: true
+  remote_url: http://127.0.0.1:8003
+retrieval:
+  search_k: 200
+  score_threshold: 0.15
+  use_rerank: false
+  rerank_model: ''
+  rerank_top_k: 100
+hybrid_search:
+  enabled: true
+  bm25_weight: 0.4
+  vector_weight: 0.6
+  rrf_k: 60
+query_expansion:
+  enabled: true
+  synonym_dict:
+    肺癌:
+    - NSCLC
+    - 非小细胞肺癌
+    - SCLC
+    - 小细胞肺癌
+    - lung cancer
+    胃癌:
+    - gastric cancer
+    - stomach cancer
+    肠癌:
+    - colorectal cancer
+    - CRC
+    - 结直肠癌
+    - 大肠癌
+    肝癌:
+    - HCC
+    - 肝细胞癌
+    - hepatocellular carcinoma
+    乳腺癌:
+    - breast cancer
+    食管癌:
+    - esophageal cancer
+    - 食道癌
+    鼻咽癌:
+    - nasopharyngeal carcinoma
+    - NPC
+    免疫治疗:
+    - PD-1
+    - PD-L1
+    - 免疫检查点抑制剂
+    - ICI
+    化疗:
+    - 化学治疗
+    - chemical therapy
+    靶向:
+    - targeted therapy
+    - 分子靶向
+    - 靶向治疗
+    放疗:
+    - 放射治疗
+    - radiation therapy
+    副作用:
+    - 不良反应
+    - AE
+    - adverse event
+    生存期:
+    - OS
+    - 总生存期
+    - PFS
+    - 无进展生存期
+    分期:
+    - TNM
+    - I期
+    - II期
+    - III期
+    - IV期
+    - 早期
+    - 晚期
+    标志物:
+    - biomarker
+    - 生物标志物
+    - MSI
+    - TMB
+terminology:
+  enabled: true
+  source: medct
+  medct_path: data/medct
+  medct_download_url: ''
+  auto_download: true
+  custom_rules: {}
+llm:
+  base_url: https://api.deepseek.com/v1
+  api_key: YOUR_DEEPSEEK_API_KEY
+  api_id: YOUR_API_ID
+  model_name: deepseek-v4-pro
+  temperature: 0.5
+  max_tokens: 4096
+  top_p: 0.9
+  system_prompt: ''
+knowledge_base:
+  pdf_paths: []
+  markdown_paths: []
+  auto_scan: true
+  scan_interval_hours: 24
+cache:
+  enabled: true
+  max_size: 1000
+  similarity_threshold: 0.92
+  default_ttl: 3600
+  medical_fact_ttl: 86400
+  guideline_ttl: 43200
+  persist_path: data/query_cache.json
+  save_interval: 300
+host: 0.0.0.0
+port: 8000
+log_level: info
+data_dir: data
+knowledge_base_dir: knowledge-base
+derive_master_key: YOUR_RANDOM_64_HEX_CHARS

@@ -1,0 +1,33 @@
+# Data directory - runtime files, secrets, uploaded documents
+data/
+
+# Knowledge base - PDF and markdown files (large, not in repo)
+knowledge-base/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+*.log.*
+logs/
+
+# Config with real secrets
+config.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
